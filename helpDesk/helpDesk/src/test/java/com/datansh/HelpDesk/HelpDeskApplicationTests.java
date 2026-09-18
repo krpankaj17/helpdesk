@@ -1,4 +1,4 @@
-package com.datansh.helpDesk;
+package com.datansh.HelpDesk;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;

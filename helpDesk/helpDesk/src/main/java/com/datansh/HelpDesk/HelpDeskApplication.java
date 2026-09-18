@@ -1,4 +1,4 @@
-package com.datansh.helpDesk;
+package com.datansh.HelpDesk;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
