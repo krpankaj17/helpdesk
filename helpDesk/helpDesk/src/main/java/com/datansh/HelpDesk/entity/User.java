@@ -2,8 +2,7 @@ package com.datansh.HelpDesk.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
-import org.hibernate.annotations.ColumnDefault;
-import org.hibernate.annotations.Generated;
+import org.hibernate.annotations.*;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -20,24 +19,26 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "user_id")
     private Long userId ;
-    @Generated
+    @UuidGenerator
     @Column(name = "user_public_id", nullable = false, unique = true)
     private UUID userPublicId;
     @Column(name = "email", nullable = false )
     private String email;
-    @Column(name = "password", nullable = false )
+    @Column(name = "password", nullable = false,unique = true )
     private String password;
     @Column(name = "name", nullable = false   )
     private String name;
-    @Column(name = "role_id")
-    private Long roleId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "role_id")
+    private Role role;
     @ColumnDefault("true")
     @Column(name = "is_active", nullable = false)
-    private Boolean isActive;
-    @Generated
+    private Boolean isActive = true;
+    @CreationTimestamp
     @Column(name = "created_at", nullable = false)
+
     private OffsetDateTime createdAt;
-    @Generated
+    @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
