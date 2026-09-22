@@ -24,7 +24,7 @@ public class User {
     private UUID userPublicId;
     @Column(name = "email", nullable = false )
     private String email;
-    @Column(name = "password", nullable = false,unique = true )
+    @Column(name = "password", nullable = false )
     private String password;
     @Column(name = "name", nullable = false   )
     private String name;
@@ -36,7 +36,6 @@ public class User {
     private Boolean isActive = true;
     @CreationTimestamp
     @Column(name = "created_at", nullable = false)
-
     private OffsetDateTime createdAt;
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
