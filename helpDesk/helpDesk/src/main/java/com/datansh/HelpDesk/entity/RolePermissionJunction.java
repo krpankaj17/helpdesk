@@ -16,11 +16,11 @@ public class RolePermissionJunction {
     @ManyToOne(fetch = FetchType.LAZY)
     @MapsId("roleId")
     @JoinColumn(name = "role_id", nullable = false)
-    private Role roleId;
+    private Role role;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @MapsId("permissionId")
     @JoinColumn(name = "permission_id", nullable = false)
-    private Permission permissionId;
+    private Permission permission;
 
 }
