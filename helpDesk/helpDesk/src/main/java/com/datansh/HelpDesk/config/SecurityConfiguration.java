@@ -3,7 +3,6 @@ package com.datansh.HelpDesk.config;
 import com.datansh.HelpDesk.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -32,6 +31,9 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/login").permitAll()
                         .requestMatchers("/users/**").hasAuthority("USER_MANAGE")
+                        .requestMatchers("/ticket").hasAuthority("USER_MANAGE")
+                        .requestMatchers("/category").hasAuthority("USER_MANAGE")
+                        .requestMatchers("/roles").hasAuthority("USER_MANAGE")
                         .anyRequest().authenticated());
         return http.build();
     }

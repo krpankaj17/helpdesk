@@ -34,7 +34,7 @@ public class Ticket {
     private String title ;
 
      @Column(name = "description")
-     private  String  Description;
+     private  String  description;
      
      @ManyToOne(fetch = FetchType.LAZY)
      @JoinColumn(name = "category_id")
@@ -49,7 +49,7 @@ public class Ticket {
      private User requestor;
      @Enumerated(EnumType.STRING)
      @Column(name = "status",nullable = false)
-     private TicketStatus Status;
+     private TicketStatus status;
 
      @CreationTimestamp
      @Column(name = "created_at",nullable = false)
