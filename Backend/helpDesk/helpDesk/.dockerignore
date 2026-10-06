@@ -1,0 +1,8 @@
+target
+logs
+uploads
+.idea
+*.iml
+.git
+.gitignore
+HELP.md
