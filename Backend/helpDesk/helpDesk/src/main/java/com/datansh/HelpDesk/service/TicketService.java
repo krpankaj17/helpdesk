@@ -522,16 +522,16 @@ public class TicketService {
                 .orElseThrow(() -> new ResourceNotFoundException("User", "email", authentication.getName()));
 
         String role = currentUser.getRole() != null ? currentUser.getRole().getName() : "";
-        if ("REQUESTER".equals(role)) {
-            throw new AccessDeniedException("Requesters do not have access to the dashboard");
-        }
+        boolean isAgent = "SUPPORT_AGENT".equals(role) || "AGENT".equals(role);
+        boolean isRequester = "REQUESTER".equals(role);
 
         OffsetDateTime now = OffsetDateTime.now();
-        boolean isAgent = "SUPPORT_AGENT".equals(role) || "AGENT".equals(role);
 
-        Object[] statusResult = isAgent
-                ? ticketRepository.countTicketStatusesForAgent(currentUser, now)
-                : ticketRepository.countTicketStatuses(now);
+        Object[] statusResult = isRequester
+                ? ticketRepository.countTicketStatusesForRequestor(currentUser, now)
+                : (isAgent
+                    ? ticketRepository.countTicketStatusesForAgent(currentUser, now)
+                    : ticketRepository.countTicketStatuses(now));
 
         Object[] statusCounts = (statusResult != null && statusResult.length > 0 && statusResult[0] instanceof Object[])
                 ? (Object[]) statusResult[0]
@@ -545,12 +545,14 @@ public class TicketService {
         long closed = statusCounts != null && statusCounts.length > 5 && statusCounts[5] != null ? ((Number) statusCounts[5]).longValue() : 0L;
         long overdue = statusCounts != null && statusCounts.length > 6 && statusCounts[6] != null ? ((Number) statusCounts[6]).longValue() : 0L;
 
-        long unassigned = isAgent ? 0L : ticketRepository.countUnassignedTickets();
+        long unassigned = (isAgent || isRequester) ? 0L : ticketRepository.countUnassignedTickets();
 
         Map<String, Long> priorityMap = new HashMap<>();
-        List<Object[]> priorityRows = isAgent
-                ? ticketRepository.countTicketsByPriorityForAgent(currentUser)
-                : ticketRepository.countTicketsByPriority();
+        List<Object[]> priorityRows = isRequester
+                ? ticketRepository.countTicketsByPriorityForRequestor(currentUser)
+                : (isAgent
+                    ? ticketRepository.countTicketsByPriorityForAgent(currentUser)
+                    : ticketRepository.countTicketsByPriority());
         if (priorityRows != null) {
             for (Object[] row : priorityRows) {
                 if (row != null && row.length >= 2 && row[0] != null && row[1] != null) {
@@ -560,7 +562,7 @@ public class TicketService {
         }
 
         Map<String, Long> agentWorkload = new HashMap<>();
-        if (!isAgent) {
+        if (!isAgent && !isRequester) {
             List<Object[]> workloadRows = ticketAssignmentRepository.countActiveTicketsPerAgent();
             if (workloadRows != null) {
                 for (Object[] row : workloadRows) {

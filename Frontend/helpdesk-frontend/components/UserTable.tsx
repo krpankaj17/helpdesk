@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { User, UserRole } from '@/types';
+import { User, UserRole, UserSummary } from '@/types';
 import { useToast } from '@/context/ToastContext';
 import TablePagination from '@/components/TablePagination';
 import { 
@@ -20,6 +20,7 @@ import {
 
 interface UserTableProps {
   users: User[];
+  userSummary?: UserSummary | null;
   ticketCountsByAgent?: Record<string, { total: number; active: number }>;
   onAddUser?: () => void;
   onToggleStatus?: (user: User) => void;
@@ -36,10 +37,17 @@ interface UserTableProps {
   onSearchChange?: (query: string) => void;
   sortOrder?: 'desc' | 'asc';
   onSortChange?: (order: 'desc' | 'asc') => void;
+  activeStatTab?: 'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE';
+  onStatTabChange?: (tab: 'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE') => void;
+  roleFilter?: string;
+  onRoleFilterChange?: (role: string) => void;
+  statusFilter?: string;
+  onStatusFilterChange?: (status: string) => void;
 }
 
 export default function UserTable({
   users,
+  userSummary,
   ticketCountsByAgent = {},
   onAddUser,
   onToggleStatus,
@@ -56,22 +64,55 @@ export default function UserTable({
   onSearchChange,
   sortOrder: externalSortOrder,
   onSortChange,
+  activeStatTab: externalActiveStatTab,
+  onStatTabChange,
+  roleFilter: externalRoleFilter,
+  onRoleFilterChange,
+  statusFilter: externalStatusFilter,
+  onStatusFilterChange,
 }: UserTableProps) {
   const { toast } = useToast();
   const [internalSearchQuery, setInternalSearchQuery] = useState('');
   const [internalSortOrder, setInternalSortOrder] = useState<'desc' | 'asc'>('desc');
-  const [roleFilter, setRoleFilter] = useState('ALL');
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [activeStatTab, setActiveStatTab] = useState<'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE'>('ALL');
+  const [internalRoleFilter, setInternalRoleFilter] = useState('ALL');
+  const [internalStatusFilter, setInternalStatusFilter] = useState('ALL');
+  const [internalActiveStatTab, setInternalActiveStatTab] = useState<'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE'>('ALL');
 
   const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery;
   const sortOrder = externalSortOrder !== undefined ? externalSortOrder : internalSortOrder;
+  const roleFilter = externalRoleFilter !== undefined ? externalRoleFilter : internalRoleFilter;
+  const statusFilter = externalStatusFilter !== undefined ? externalStatusFilter : internalStatusFilter;
+  const activeStatTab = externalActiveStatTab !== undefined ? externalActiveStatTab : internalActiveStatTab;
 
   const handleSearchChange = (value: string) => {
     if (onSearchChange) {
       onSearchChange(value);
     } else {
       setInternalSearchQuery(value);
+    }
+  };
+
+  const handleRoleFilterChange = (role: string) => {
+    if (onRoleFilterChange) {
+      onRoleFilterChange(role);
+    } else {
+      setInternalRoleFilter(role);
+    }
+  };
+
+  const handleStatusFilterChange = (status: string) => {
+    if (onStatusFilterChange) {
+      onStatusFilterChange(status);
+    } else {
+      setInternalStatusFilter(status);
+    }
+  };
+
+  const handleStatTabChange = (tab: 'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE') => {
+    if (onStatTabChange) {
+      onStatTabChange(tab);
+    } else {
+      setInternalActiveStatTab(tab);
     }
   };
 
@@ -110,35 +151,41 @@ export default function UserTable({
 
   const isServerSide = totalElements !== undefined;
 
-  // Quick summary counts
-  const totalUsers = isServerSide ? (totalElements ?? users.length) : users.length;
-  const activeCount = users.filter(u => u.isActive).length;
-  const inactiveCount = users.filter(u => !u.isActive).length;
-  const supportStaffCount = users.filter(u => u.roleName === 'SUPPORT_AGENT' || u.roleName === 'SUPPORT_MANAGER').length;
+  // True summary counts from full dataset (if provided via userSummary), else fallback
+  const totalUsers = userSummary ? userSummary.totalUsers : (isServerSide ? (totalElements ?? users.length) : users.length);
+  const activeCount = userSummary ? userSummary.activeUsers : users.filter(u => u.isActive).length;
+  const inactiveCount = userSummary ? userSummary.inactiveUsers : users.filter(u => !u.isActive).length;
+  const supportStaffCount = userSummary 
+    ? userSummary.supportStaff 
+    : users.filter(u => u.roleName === 'SUPPORT_AGENT' || u.roleName === 'SUPPORT_MANAGER' || (u.roleName as string) === 'AGENT').length;
 
-  const filtered = users.filter(u => {
-    // Quick Ribbon Tab Filter
-    if (activeStatTab === 'ACTIVE' && !u.isActive) return false;
-    if (activeStatTab === 'INACTIVE' && u.isActive) return false;
-    if (activeStatTab === 'SUPPORT' && (u.roleName !== 'SUPPORT_AGENT' && u.roleName !== 'SUPPORT_MANAGER')) return false;
+  const isControlledFilters = onStatTabChange !== undefined || onRoleFilterChange !== undefined || onStatusFilterChange !== undefined;
 
-    // Search query: client-side filter fallback when not handled by server
-    if (searchQuery.trim() && !onSearchChange) {
-      const q = searchQuery.toLowerCase();
-      const matchName = (u.name || '').toLowerCase().includes(q);
-      const matchEmail = (u.email || '').toLowerCase().includes(q);
-      if (!matchName && !matchEmail) return false;
-    }
+  const filtered = isControlledFilters
+    ? users
+    : users.filter(u => {
+        // Quick Ribbon Tab Filter
+        if (activeStatTab === 'ACTIVE' && !u.isActive) return false;
+        if (activeStatTab === 'INACTIVE' && u.isActive) return false;
+        if (activeStatTab === 'SUPPORT' && (u.roleName !== 'SUPPORT_AGENT' && u.roleName !== 'SUPPORT_MANAGER' && (u.roleName as string) !== 'AGENT')) return false;
 
-    // Dropdown filters
-    if (roleFilter !== 'ALL' && u.roleName !== roleFilter) return false;
-    if (statusFilter === 'ACTIVE' && !u.isActive) return false;
-    if (statusFilter === 'INACTIVE' && u.isActive) return false;
+        // Search query: client-side filter fallback when not handled by server
+        if (searchQuery.trim() && !onSearchChange) {
+          const q = searchQuery.toLowerCase();
+          const matchName = (u.name || '').toLowerCase().includes(q);
+          const matchEmail = (u.email || '').toLowerCase().includes(q);
+          if (!matchName && !matchEmail) return false;
+        }
 
-    return true;
-  });
+        // Dropdown filters
+        if (roleFilter !== 'ALL' && u.roleName !== roleFilter) return false;
+        if (statusFilter === 'ACTIVE' && !u.isActive) return false;
+        if (statusFilter === 'INACTIVE' && u.isActive) return false;
 
-  const total = isServerSide ? totalElements : filtered.length;
+        return true;
+      });
+
+  const total = isServerSide ? (totalElements ?? filtered.length) : filtered.length;
   const pages = totalPages !== undefined ? totalPages : Math.max(1, Math.ceil(total / size));
   const displayedUsers = isServerSide ? filtered : filtered.slice(page * size, (page + 1) * size);
 
@@ -196,7 +243,7 @@ export default function UserTable({
       {/* Summary Ribbon Strip with Light Yellow Highlighted Pill */}
       <div className="pill-card px-4 py-3 flex items-center gap-2 sm:gap-6 overflow-x-auto">
         <button
-          onClick={() => setActiveStatTab('ALL')}
+          onClick={() => handleStatTabChange('ALL')}
           className={`flex items-center gap-3 px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
             activeStatTab === 'ALL'
               ? 'badge-yellow font-bold shadow-2xs'
@@ -208,7 +255,7 @@ export default function UserTable({
         </button>
 
         <button
-          onClick={() => setActiveStatTab('ACTIVE')}
+          onClick={() => handleStatTabChange('ACTIVE')}
           className={`flex items-center gap-3 px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
             activeStatTab === 'ACTIVE'
               ? 'badge-yellow font-bold shadow-2xs'
@@ -220,7 +267,7 @@ export default function UserTable({
         </button>
 
         <button
-          onClick={() => setActiveStatTab('SUPPORT')}
+          onClick={() => handleStatTabChange('SUPPORT')}
           className={`flex items-center gap-3 px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
             activeStatTab === 'SUPPORT'
               ? 'badge-yellow font-bold shadow-2xs'
@@ -232,7 +279,7 @@ export default function UserTable({
         </button>
 
         <button
-          onClick={() => setActiveStatTab('INACTIVE')}
+          onClick={() => handleStatTabChange('INACTIVE')}
           className={`flex items-center gap-3 px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
             activeStatTab === 'INACTIVE'
               ? 'badge-yellow font-bold shadow-2xs'
@@ -264,7 +311,7 @@ export default function UserTable({
           <div className="relative">
             <select
               value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
+              onChange={(e) => handleRoleFilterChange(e.target.value)}
               className="appearance-none bg-white border border-slate-200 rounded-full px-4 py-1.5 pr-8 text-xs font-semibold text-slate-700 hover:border-slate-300 focus:outline-none shadow-2xs cursor-pointer"
             >
               <option value="ALL">All Roles</option>
@@ -280,7 +327,7 @@ export default function UserTable({
           <div className="relative">
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => handleStatusFilterChange(e.target.value)}
               className="appearance-none bg-white border border-slate-200 rounded-full px-4 py-1.5 pr-8 text-xs font-semibold text-slate-700 hover:border-slate-300 focus:outline-none shadow-2xs cursor-pointer"
             >
               <option value="ALL">All Statuses</option>

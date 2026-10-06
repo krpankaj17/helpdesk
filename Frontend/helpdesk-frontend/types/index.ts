@@ -20,6 +20,13 @@ export interface User {
   avatar?: string;
 }
 
+export interface UserSummary {
+  totalUsers: number;
+  activeUsers: number;
+  inactiveUsers: number;
+  supportStaff: number;
+}
+
 export interface CreateUserRequest {
   email: string;
   password?: string;

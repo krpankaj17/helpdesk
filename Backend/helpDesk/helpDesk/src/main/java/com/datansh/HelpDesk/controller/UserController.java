@@ -4,6 +4,7 @@ import com.datansh.HelpDesk.dto.CreateUserRequest;
 import com.datansh.HelpDesk.dto.CreateUserResponse;
 import com.datansh.HelpDesk.dto.UpdateUserRequest;
 import com.datansh.HelpDesk.dto.UpdateUserStatusRequest;
+import com.datansh.HelpDesk.dto.UserSummaryResponse;
 import com.datansh.HelpDesk.service.UserService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -35,13 +36,21 @@ public class UserController {
         return ResponseEntity.ok(userService.getCurrentUser());
     }
 
+    @GetMapping("/summary")
+    public ResponseEntity<UserSummaryResponse> getUserSummary() {
+        return ResponseEntity.ok(userService.getUserSummary());
+    }
+
     @GetMapping
     public ResponseEntity<Page<CreateUserResponse>> getAllUser(
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) Boolean isActive,
+            @RequestParam(required = false) Boolean isSupportStaff,
             @org.springdoc.core.annotations.ParameterObject
             @PageableDefault (size = 10,sort = "createdAt",direction = Sort.Direction.DESC)
             Pageable pageable){
-        return ResponseEntity.ok().body(userService.getAllUsers(search, pageable));
+        return ResponseEntity.ok().body(userService.getAllUsers(search, role, isActive, isSupportStaff, pageable));
     }
     @DeleteMapping("/{publicId}")
     public ResponseEntity<?>  deleteUser(@PathVariable UUID publicId){

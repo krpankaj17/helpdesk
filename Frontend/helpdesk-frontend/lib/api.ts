@@ -17,7 +17,8 @@ import {
   Role,
   Permission,
   PaginatedResponse,
-  AttachmentResponse
+  AttachmentResponse,
+  UserSummary
 } from '@/types';
 import { apiCache, CACHE_TTL, CacheOptions } from './cache';
 
@@ -567,15 +568,30 @@ export const api = {
   },
 
   users: {
+    async getSummary(options?: CacheOptions | { forceRefresh?: boolean }): Promise<UserSummary> {
+      return apiCache.fetchWithCache(
+        'users:summary',
+        () => request<UserSummary>('/users/summary'),
+        {
+          ttl: CACHE_TTL.USERS,
+          tag: 'users',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
+    },
+
     async getPaginated(
       page = 0, 
       size = 10, 
       searchOrOptions?: string | CacheOptions | { forceRefresh?: boolean }, 
       sort = 'createdAt,desc', 
+      filtersOrOptions?: { role?: string; isActive?: boolean; isSupportStaff?: boolean } | CacheOptions | { forceRefresh?: boolean },
       options?: CacheOptions | { forceRefresh?: boolean }
     ): Promise<PaginatedResponse<User>> {
       let search: string | undefined;
       let actualOptions = options;
+      let filters: { role?: string; isActive?: boolean; isSupportStaff?: boolean } | undefined;
+
       if (typeof searchOrOptions === 'object' && searchOrOptions !== null) {
         actualOptions = searchOrOptions;
         search = undefined;
@@ -583,11 +599,22 @@ export const api = {
         search = searchOrOptions;
       }
 
+      if (filtersOrOptions) {
+        if ('forceRefresh' in filtersOrOptions || 'ttl' in filtersOrOptions || 'tag' in filtersOrOptions) {
+          actualOptions = filtersOrOptions as any;
+        } else {
+          filters = filtersOrOptions as any;
+        }
+      }
+
       const query = new URLSearchParams();
       query.append('page', page.toString());
       query.append('size', size.toString());
       if (search && search.trim()) query.append('search', search.trim());
       if (sort) query.append('sort', sort);
+      if (filters?.role && filters.role !== 'ALL') query.append('role', filters.role);
+      if (filters?.isActive !== undefined) query.append('isActive', filters.isActive.toString());
+      if (filters?.isSupportStaff) query.append('isSupportStaff', 'true');
 
       return apiCache.fetchWithCache(
         `users:paginated:${query.toString()}`,

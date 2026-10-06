@@ -56,6 +56,20 @@ public interface TicketRepository extends JpaRepository<Ticket, Long>, JpaSpecif
     Object[] countTicketStatusesForAgent(@Param("agent") User agent, @Param("now") OffsetDateTime now);
 
     @Query("""
+        SELECT 
+            COUNT(t),
+            COUNT(CASE WHEN t.status = com.datansh.HelpDesk.enums.TicketStatus.OPEN THEN 1 END),
+            COUNT(CASE WHEN t.status = com.datansh.HelpDesk.enums.TicketStatus.IN_PROGRESS THEN 1 END),
+            COUNT(CASE WHEN t.status = com.datansh.HelpDesk.enums.TicketStatus.WAITING_ON_REQUESTOR THEN 1 END),
+            COUNT(CASE WHEN t.status = com.datansh.HelpDesk.enums.TicketStatus.RESOLVED THEN 1 END),
+            COUNT(CASE WHEN t.status = com.datansh.HelpDesk.enums.TicketStatus.CLOSED THEN 1 END),
+            COUNT(CASE WHEN t.status NOT IN (com.datansh.HelpDesk.enums.TicketStatus.RESOLVED, com.datansh.HelpDesk.enums.TicketStatus.CLOSED) AND t.resolutionDeadline < :now THEN 1 END)
+        FROM Ticket t
+        WHERE t.requestor = :requestor
+    """)
+    Object[] countTicketStatusesForRequestor(@Param("requestor") User requestor, @Param("now") OffsetDateTime now);
+
+    @Query("""
         SELECT COUNT(t) FROM Ticket t 
         WHERE t.status NOT IN (com.datansh.HelpDesk.enums.TicketStatus.RESOLVED, com.datansh.HelpDesk.enums.TicketStatus.CLOSED)
         AND NOT EXISTS (
@@ -76,6 +90,9 @@ public interface TicketRepository extends JpaRepository<Ticket, Long>, JpaSpecif
         GROUP BY p.name
     """)
     List<Object[]> countTicketsByPriorityForAgent(@Param("agent") User agent);
+
+    @Query("SELECT p.name, COUNT(t) FROM Ticket t JOIN t.ticketPriority p WHERE t.requestor = :requestor GROUP BY p.name")
+    List<Object[]> countTicketsByPriorityForRequestor(@Param("requestor") User requestor);
 
     @Query("SELECT t.category.categoryId, COUNT(t) FROM Ticket t WHERE t.category IS NOT NULL GROUP BY t.category.categoryId")
     List<Object[]> countTicketsByCategory();

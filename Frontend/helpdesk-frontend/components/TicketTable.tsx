@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Ticket, TicketStatus, TicketCategory, User } from '@/types';
+import { Ticket, TicketStatus, TicketCategory, User, DashboardMetrics } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import TablePagination from '@/components/TablePagination';
 import { 
@@ -11,7 +11,7 @@ import {
   Tag, 
   Layers, 
   ChevronDown, 
-  ChevronLeft,
+  ChevronLeft, 
   ChevronRight,
   X, 
   Headphones, 
@@ -30,6 +30,15 @@ interface TicketTableProps {
   title?: string;
   subtitle?: string;
   showAllLink?: boolean;
+
+  // Metrics & Status Tab props
+  metrics?: DashboardMetrics | null;
+  selectedStatus?: TicketStatus | 'ALL';
+  onStatusChange?: (status: TicketStatus | 'ALL') => void;
+
+  // Search query (if controlled from parent)
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
 
   // Pagination props (Server-side or controlled)
   currentPage?: number;
@@ -53,6 +62,11 @@ export default function TicketTable({
   title = "Tickets",
   subtitle,
   showAllLink = true,
+  metrics,
+  selectedStatus,
+  onStatusChange,
+  searchQuery: externalSearchQuery,
+  onSearchChange,
   currentPage,
   totalPages,
   totalElements,
@@ -66,10 +80,34 @@ export default function TicketTable({
   const isAgent = role === 'SUPPORT_AGENT' || (role as string) === 'AGENT';
   const canFilterByAgent = role === 'ADMIN' || role === 'SUPPORT_MANAGER';
 
-  const [filterTab, setFilterTab] = useState<'ALL' | 'OPEN' | 'IN_PROGRESS' | 'WAITING' | 'RESOLVED' | 'CLOSED'>('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [internalFilterTab, setInternalFilterTab] = useState<'ALL' | 'OPEN' | 'IN_PROGRESS' | 'WAITING' | 'RESOLVED' | 'CLOSED'>('ALL');
+  const [internalSearchQuery, setInternalSearchQuery] = useState('');
   const [internalCategory, setInternalCategory] = useState<number | 'ALL'>('ALL');
   const [internalAgent, setInternalAgent] = useState<string | 'ALL' | 'UNASSIGNED'>('ALL');
+
+  const filterTab: 'ALL' | 'OPEN' | 'IN_PROGRESS' | 'WAITING' | 'RESOLVED' | 'CLOSED' = 
+    selectedStatus !== undefined 
+      ? (selectedStatus === 'WAITING_ON_REQUESTOR' ? 'WAITING' : selectedStatus as any) 
+      : internalFilterTab;
+
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery;
+
+  const handleSearchChange = (value: string) => {
+    if (onSearchChange) {
+      onSearchChange(value);
+    } else {
+      setInternalSearchQuery(value);
+    }
+  };
+
+  const handleStatusTabClick = (tabId: 'ALL' | 'OPEN' | 'IN_PROGRESS' | 'WAITING' | 'RESOLVED' | 'CLOSED') => {
+    if (onStatusChange) {
+      const statusParam: TicketStatus | 'ALL' = tabId === 'WAITING' ? 'WAITING_ON_REQUESTOR' : (tabId as TicketStatus | 'ALL');
+      onStatusChange(statusParam);
+    } else {
+      setInternalFilterTab(tabId);
+    }
+  };
 
   // Internal pagination fallback if not controlled from parent
   const [internalPage, setInternalPage] = useState(0);
@@ -178,40 +216,45 @@ export default function TicketTable({
     // Populate from supportAgents list
     supportAgents.forEach(agent => {
       const email = agent.email.toLowerCase().trim();
+      const workloadActive = metrics?.agentWorkload ? (metrics.agentWorkload[email] ?? metrics.agentWorkload[agent.email] ?? 0) : 0;
       counts[email] = {
         name: agent.name,
         email: agent.email,
-        count: 0,
-        activeCount: 0,
+        count: Number(workloadActive),
+        activeCount: Number(workloadActive),
       };
     });
 
-    // Count tickets assigned to each agent
-    tickets.forEach(ticket => {
-      if (!ticket.assignedAgentEmail) {
-        unassigned++;
-      } else {
-        const key = ticket.assignedAgentEmail.toLowerCase().trim();
-        if (!counts[key]) {
-          counts[key] = {
-            name: ticket.assignedAgentName || ticket.assignedAgentEmail,
-            email: ticket.assignedAgentEmail,
-            count: 0,
-            activeCount: 0,
-          };
+    // If metrics not available, fall back to counting from current tickets array
+    if (!metrics) {
+      tickets.forEach(ticket => {
+        if (!ticket.assignedAgentEmail) {
+          unassigned++;
+        } else {
+          const key = ticket.assignedAgentEmail.toLowerCase().trim();
+          if (!counts[key]) {
+            counts[key] = {
+              name: ticket.assignedAgentName || ticket.assignedAgentEmail,
+              email: ticket.assignedAgentEmail,
+              count: 0,
+              activeCount: 0,
+            };
+          }
+          counts[key].count++;
+          if (ticket.status === 'OPEN' || ticket.status === 'IN_PROGRESS' || ticket.status === 'WAITING_ON_REQUESTOR') {
+            counts[key].activeCount++;
+          }
         }
-        counts[key].count++;
-        if (ticket.status === 'OPEN' || ticket.status === 'IN_PROGRESS' || ticket.status === 'WAITING_ON_REQUESTOR') {
-          counts[key].activeCount++;
-        }
-      }
-    });
+      });
+    }
+
+    const totalUnassigned = metrics ? metrics.unassignedTickets : unassigned;
 
     return {
       agentStats: Object.values(counts).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
-      unassignedCount: unassigned,
+      unassignedCount: totalUnassigned,
     };
-  }, [tickets, supportAgents]);
+  }, [tickets, supportAgents, metrics]);
 
   // Filter agent list based on search inside dropdown
   const filteredAgentList = useMemo(() => {
@@ -220,8 +263,14 @@ export default function TicketTable({
     return agentStats.filter(a => a.name.toLowerCase().includes(q) || a.email.toLowerCase().includes(q));
   }, [agentStats, agentSearchQuery]);
 
+  const isControlledServerSide = Boolean(onStatusChange || onSearchChange || onCategoryChange || onAgentChange);
+
   // Filter tickets based on status tab, category, agent, and search
   const filteredTickets = useMemo(() => {
+    if (isControlledServerSide) {
+      return tickets;
+    }
+
     return tickets.filter(ticket => {
       // Tab filter
       if (filterTab === 'OPEN' && ticket.status !== 'OPEN') return false;
@@ -257,12 +306,22 @@ export default function TicketTable({
 
       return true;
     });
-  }, [tickets, filterTab, activeCategory, activeAgent, searchQuery]);
+  }, [tickets, isControlledServerSide, filterTab, activeCategory, activeAgent, searchQuery]);
 
   // Status counts for tabs
   const tabCounts = useMemo(() => {
+    if (metrics) {
+      return {
+        ALL: metrics.totalTickets,
+        OPEN: metrics.openTickets,
+        IN_PROGRESS: metrics.inProgressTickets,
+        WAITING: metrics.waitingTickets,
+        RESOLVED: metrics.resolvedTickets,
+        CLOSED: metrics.closedTickets,
+      };
+    }
     const counts = {
-      ALL: tickets.length,
+      ALL: totalElements !== undefined ? totalElements : tickets.length,
       OPEN: 0,
       IN_PROGRESS: 0,
       WAITING: 0,
@@ -277,7 +336,7 @@ export default function TicketTable({
       else if (t.status === 'CLOSED') counts.CLOSED++;
     });
     return counts;
-  }, [tickets]);
+  }, [tickets, metrics, totalElements]);
 
   const selectedCategoryObj = categories.find(c => c.categoryId === activeCategory);
   const selectedAgentObj = agentStats.find(a => a.email.toLowerCase() === activeAgent.toLowerCase());
@@ -365,12 +424,12 @@ export default function TicketTable({
               type="text"
               placeholder="Search tickets..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="pl-8 pr-4 py-1.5 rounded-full text-xs bg-slate-50 border border-slate-200 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all w-44 sm:w-56"
             />
             {searchQuery && (
               <button
-                onClick={() => setSearchQuery('')}
+                onClick={() => handleSearchChange('')}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="w-3 h-3" />
@@ -406,7 +465,7 @@ export default function TicketTable({
             return (
               <button
                 key={tab.id}
-                onClick={() => setFilterTab(tab.id)}
+                onClick={() => handleStatusTabClick(tab.id)}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
                   isSelected
                     ? 'bg-[#0B132B] text-white shadow-2xs'
@@ -607,8 +666,8 @@ export default function TicketTable({
                       onClick={() => {
                         handleCategorySelect('ALL');
                         handleAgentSelect('ALL');
-                        setFilterTab('ALL');
-                        setSearchQuery('');
+                        handleStatusTabClick('ALL');
+                        handleSearchChange('');
                       }}
                       className="mt-2 text-xs font-semibold text-slate-800 underline hover:text-slate-950 cursor-pointer"
                     >

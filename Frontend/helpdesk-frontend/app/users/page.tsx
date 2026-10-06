@@ -7,7 +7,7 @@ import UserTable from '@/components/UserTable';
 import UserModal from '@/components/UserModal';
 import EditUserModal from '@/components/EditUserModal';
 import { api } from '@/lib/api';
-import { User, CreateUserRequest } from '@/types';
+import { User, CreateUserRequest, UserSummary } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 
@@ -23,6 +23,7 @@ function UsersContent() {
   const { canManageUsers } = useAuth();
   const { toast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
+  const [userSummary, setUserSummary] = useState<UserSummary | null>(null);
   const [ticketCounts, setTicketCounts] = useState<Record<string, { total: number; active: number }>>({});
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -35,6 +36,9 @@ function UsersContent() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
+  const [activeStatTab, setActiveStatTab] = useState<'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE'>('ALL');
+  const [roleFilter, setRoleFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const isFirstMount = useRef(true);
 
   const loadData = async (
@@ -42,15 +46,35 @@ function UsersContent() {
     targetSize = pageSize,
     targetSearch = searchQuery,
     targetSort = sortOrder,
+    targetStatTab = activeStatTab,
+    targetRole = roleFilter,
+    targetStatus = statusFilter,
     forceRefresh = false
   ) => {
     setIsLoading(true);
     try {
       const sortParam = `createdAt,${targetSort}`;
-      const [uPage, tList] = await Promise.all([
-        api.users.getPaginated(targetPage, targetSize, targetSearch, sortParam, { forceRefresh }).catch(() => null),
-        api.tickets.getAll(undefined, { forceRefresh }).catch(() => []),
+      const [uPage, summary, metricData] = await Promise.all([
+        api.users.getPaginated(
+          targetPage,
+          targetSize,
+          targetSearch,
+          sortParam,
+          {
+            role: targetRole !== 'ALL' ? targetRole : undefined,
+            isActive: targetStatTab === 'ACTIVE' || targetStatus === 'ACTIVE'
+              ? true
+              : targetStatTab === 'INACTIVE' || targetStatus === 'INACTIVE'
+                ? false
+                : undefined,
+            isSupportStaff: targetStatTab === 'SUPPORT' ? true : undefined,
+          },
+          { forceRefresh }
+        ).catch(() => null),
+        api.users.getSummary({ forceRefresh }).catch(() => null),
+        api.tickets.getDashboardMetrics({ forceRefresh }).catch(() => null),
       ]);
+
       if (uPage) {
         setUsers(uPage.content || []);
         setTotalPages(uPage.totalPages);
@@ -58,19 +82,16 @@ function UsersContent() {
         setCurrentPage(uPage.number);
       }
 
+      if (summary) {
+        setUserSummary(summary);
+      }
+
       const counts: Record<string, { total: number; active: number }> = {};
-      (tList || []).forEach((t) => {
-        if (t.assignedAgentEmail) {
-          const key = t.assignedAgentEmail.toLowerCase();
-          if (!counts[key]) {
-            counts[key] = { total: 0, active: 0 };
-          }
-          counts[key].total++;
-          if (t.status === 'OPEN' || t.status === 'IN_PROGRESS' || t.status === 'WAITING_ON_REQUESTOR') {
-            counts[key].active++;
-          }
-        }
-      });
+      if (metricData?.agentWorkload) {
+        Object.entries(metricData.agentWorkload).forEach(([email, activeCount]) => {
+          counts[email.toLowerCase()] = { total: Number(activeCount), active: Number(activeCount) };
+        });
+      }
       setTicketCounts(counts);
     } catch {
       setUsers([]);
@@ -84,25 +105,25 @@ function UsersContent() {
   useEffect(() => {
     if (isFirstMount.current) {
       isFirstMount.current = false;
-      loadData(0, pageSize, searchQuery, sortOrder, false);
+      loadData(0, pageSize, searchQuery, sortOrder, activeStatTab, roleFilter, statusFilter, false);
       return;
     }
 
     const timer = setTimeout(() => {
-      loadData(0, pageSize, searchQuery, sortOrder, false);
+      loadData(0, pageSize, searchQuery, sortOrder, activeStatTab, roleFilter, statusFilter, false);
     }, 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage);
-    loadData(newPage, pageSize, searchQuery, sortOrder);
+    loadData(newPage, pageSize, searchQuery, sortOrder, activeStatTab, roleFilter, statusFilter);
   };
 
   const handlePageSizeChange = (newSize: number) => {
     setPageSize(newSize);
     setCurrentPage(0);
-    loadData(0, newSize, searchQuery, sortOrder);
+    loadData(0, newSize, searchQuery, sortOrder, activeStatTab, roleFilter, statusFilter);
   };
 
   const handleSearchChange = (query: string) => {
@@ -113,14 +134,32 @@ function UsersContent() {
   const handleSortChange = (newSort: 'desc' | 'asc') => {
     setSortOrder(newSort);
     setCurrentPage(0);
-    loadData(0, pageSize, searchQuery, newSort, false);
+    loadData(0, pageSize, searchQuery, newSort, activeStatTab, roleFilter, statusFilter, false);
+  };
+
+  const handleStatTabChange = (tab: 'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE') => {
+    setActiveStatTab(tab);
+    setCurrentPage(0);
+    loadData(0, pageSize, searchQuery, sortOrder, tab, roleFilter, statusFilter, false);
+  };
+
+  const handleRoleFilterChange = (role: string) => {
+    setRoleFilter(role);
+    setCurrentPage(0);
+    loadData(0, pageSize, searchQuery, sortOrder, activeStatTab, role, statusFilter, false);
+  };
+
+  const handleStatusFilterChange = (status: string) => {
+    setStatusFilter(status);
+    setCurrentPage(0);
+    loadData(0, pageSize, searchQuery, sortOrder, activeStatTab, roleFilter, status, false);
   };
 
   const handleCreateUser = async (userReq: CreateUserRequest) => {
     try {
       await api.users.create(userReq);
       toast.success('User onboarded successfully');
-      await loadData(currentPage, pageSize, searchQuery, sortOrder, true);
+      await loadData(currentPage, pageSize, searchQuery, sortOrder, activeStatTab, roleFilter, statusFilter, true);
       setIsAddUserOpen(false);
     } catch (err: any) {
       toast.error(err.message || 'Failed to create user');
@@ -131,7 +170,7 @@ function UsersContent() {
     try {
       await api.users.updateStatus(user.userPublicId, !user.isActive);
       toast.success(`User status updated to ${!user.isActive ? 'Active' : 'Inactive'}`);
-      await loadData(currentPage, pageSize, searchQuery, sortOrder, true);
+      await loadData(currentPage, pageSize, searchQuery, sortOrder, activeStatTab, roleFilter, statusFilter, true);
     } catch (err: any) {
       toast.error(err.message || 'Failed to update user status');
     }
@@ -144,8 +183,9 @@ function UsersContent() {
       <main className="max-w-[1400px] mx-auto px-4 sm:px-6">
         <UserTable
           users={users}
+          userSummary={userSummary}
           ticketCountsByAgent={ticketCounts}
-          onRefresh={() => loadData(currentPage, pageSize, searchQuery, sortOrder, true)}
+          onRefresh={() => loadData(currentPage, pageSize, searchQuery, sortOrder, activeStatTab, roleFilter, statusFilter, true)}
           currentPage={currentPage}
           totalPages={totalPages}
           totalElements={totalElements}
@@ -157,6 +197,12 @@ function UsersContent() {
           onSearchChange={handleSearchChange}
           sortOrder={sortOrder}
           onSortChange={handleSortChange}
+          activeStatTab={activeStatTab}
+          onStatTabChange={handleStatTabChange}
+          roleFilter={roleFilter}
+          onRoleFilterChange={handleRoleFilterChange}
+          statusFilter={statusFilter}
+          onStatusFilterChange={handleStatusFilterChange}
           onAddUser={() => {
             if (!canManageUsers) {
               toast.warning('Only ADMIN has USER_MANAGE authority to onboard staff.');
@@ -191,7 +237,7 @@ function UsersContent() {
         isOpen={!!editingUser}
         user={editingUser}
         onClose={() => setEditingUser(null)}
-        onSuccess={() => loadData(currentPage, pageSize, searchQuery, sortOrder, true)}
+        onSuccess={() => loadData(currentPage, pageSize, searchQuery, sortOrder, activeStatTab, roleFilter, statusFilter, true)}
       />
     </div>
   );

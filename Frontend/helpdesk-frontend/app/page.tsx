@@ -247,6 +247,7 @@ function DashboardContent() {
             tickets={tickets}
             categories={categories}
             supportAgents={supportAgents}
+            metrics={metrics}
             title={pageTitle}
             subtitle=""
             showAllLink={true}

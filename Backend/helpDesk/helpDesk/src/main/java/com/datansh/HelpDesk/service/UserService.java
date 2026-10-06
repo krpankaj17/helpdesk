@@ -3,13 +3,16 @@ package com.datansh.HelpDesk.service;
 import com.datansh.HelpDesk.dto.CreateUserRequest;
 import com.datansh.HelpDesk.dto.CreateUserResponse;
 import com.datansh.HelpDesk.dto.UpdateUserRequest;
+import com.datansh.HelpDesk.dto.UserSummaryResponse;
 import com.datansh.HelpDesk.entity.Role;
 import com.datansh.HelpDesk.entity.User;
 import com.datansh.HelpDesk.exception.ResourceNotFoundException;
 import com.datansh.HelpDesk.repository.RoleRepository;
 import com.datansh.HelpDesk.repository.UserRepository;
+import com.datansh.HelpDesk.specification.UserSpecification;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -50,14 +53,30 @@ public class UserService {
     }
 
     public Page<CreateUserResponse> getAllUsers(Pageable pageable) {
-        return getAllUsers(null, pageable);
+        return getAllUsers(null, null, null, null, pageable);
     }
 
     public Page<CreateUserResponse> getAllUsers(String search, Pageable pageable) {
-        if (search != null && !search.isBlank()) {
-            return userRepository.searchUsers(search.trim(), pageable).map(this::mapToResponse);
-        }
-        return userRepository.findAll(pageable).map(this::mapToResponse);
+        return getAllUsers(search, null, null, null, pageable);
+    }
+
+    public Page<CreateUserResponse> getAllUsers(String search, String role, Boolean isActive, Boolean isSupportStaff, Pageable pageable) {
+        Specification<User> spec = UserSpecification.filter(search, role, isActive, isSupportStaff);
+        return userRepository.findAll(spec, pageable).map(this::mapToResponse);
+    }
+
+    public UserSummaryResponse getUserSummary() {
+        Object[] summaryResult = userRepository.countUserSummary();
+        Object[] counts = (summaryResult != null && summaryResult.length > 0 && summaryResult[0] instanceof Object[])
+                ? (Object[]) summaryResult[0]
+                : summaryResult;
+
+        long total = counts != null && counts.length > 0 && counts[0] != null ? ((Number) counts[0]).longValue() : 0L;
+        long active = counts != null && counts.length > 1 && counts[1] != null ? ((Number) counts[1]).longValue() : 0L;
+        long inactive = counts != null && counts.length > 2 && counts[2] != null ? ((Number) counts[2]).longValue() : 0L;
+        long support = counts != null && counts.length > 3 && counts[3] != null ? ((Number) counts[3]).longValue() : 0L;
+
+        return new UserSummaryResponse(total, active, inactive, support);
     }
 
     public void deleteUser(UUID userPublicId) {

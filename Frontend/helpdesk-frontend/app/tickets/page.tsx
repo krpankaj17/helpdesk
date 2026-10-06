@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import AuthGuard from '@/components/AuthGuard';
@@ -8,7 +8,7 @@ import TicketTable from '@/components/TicketTable';
 import TicketModal from '@/components/TicketModal';
 import CreateTicketModal from '@/components/CreateTicketModal';
 import { api } from '@/lib/api';
-import { Ticket, TicketCategory, User, TicketStatus, CreateTicketRequest } from '@/types';
+import { Ticket, TicketCategory, User, TicketStatus, CreateTicketRequest, DashboardMetrics } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { Plus, RefreshCw } from 'lucide-react';
@@ -41,11 +41,14 @@ function TicketsContent() {
   const isAgent = role === 'SUPPORT_AGENT' || (role as string) === 'AGENT';
   const { toast } = useToast();
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [categories, setCategories] = useState<TicketCategory[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | 'ALL'>('ALL');
   const [selectedAgentEmail, setSelectedAgentEmail] = useState<string | 'ALL' | 'UNASSIGNED'>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<TicketStatus | 'ALL'>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -53,6 +56,7 @@ function TicketsContent() {
   const [pageSize, setPageSize] = useState(10);
   const [totalPages, setTotalPages] = useState(1);
   const [totalElements, setTotalElements] = useState(0);
+  const isFirstMount = useRef(true);
 
   // Sync category & agent from URL params if present
   useEffect(() => {
@@ -72,19 +76,31 @@ function TicketsContent() {
     }
   }, [agentParam, unassignedParam]);
 
-  const loadData = async (targetPage = currentPage, targetSize = pageSize, forceRefresh = false) => {
+  const loadData = async (
+    targetPage = currentPage,
+    targetSize = pageSize,
+    targetStatus = selectedStatus,
+    targetSearch = searchQuery,
+    targetCategoryId = selectedCategoryId,
+    targetAgentEmail = selectedAgentEmail,
+    forceRefresh = false
+  ) => {
     setIsLoading(true);
     try {
-      const [tPage, cList, uList] = await Promise.all([
+      const [tPage, cList, uList, metricData] = await Promise.all([
         api.tickets.getPaginated({
           page: targetPage,
           size: targetSize,
-          categoryId: selectedCategoryId !== 'ALL' ? selectedCategoryId : undefined,
-          agentEmail: selectedAgentEmail !== 'ALL' && selectedAgentEmail !== 'UNASSIGNED' ? selectedAgentEmail : undefined,
-          unassigned: selectedAgentEmail === 'UNASSIGNED' ? true : undefined,
+          status: targetStatus !== 'ALL' ? targetStatus : undefined,
+          search: targetSearch.trim() || undefined,
+          categoryId: targetCategoryId !== 'ALL' ? targetCategoryId : undefined,
+          agentEmail: targetAgentEmail !== 'ALL' && targetAgentEmail !== 'UNASSIGNED' ? targetAgentEmail : undefined,
+          unassigned: targetAgentEmail === 'UNASSIGNED' ? true : undefined,
+          sort: 'createdAt,desc',
         }, { forceRefresh }).catch(() => null),
         api.categories.getAll({ forceRefresh }).catch(() => []),
         api.users.getAll(0, 50, { forceRefresh }).catch(() => []),
+        api.tickets.getDashboardMetrics({ forceRefresh }).catch(() => null),
       ]);
       if (tPage) {
         setTickets(tPage.content || []);
@@ -94,6 +110,9 @@ function TicketsContent() {
       }
       setCategories(cList || []);
       setUsers(uList || []);
+      if (metricData) {
+        setMetrics(metricData);
+      }
     } catch {
       // Keep UI clean
     } finally {
@@ -101,29 +120,48 @@ function TicketsContent() {
     }
   };
 
+  // Debounced search query change effect
   useEffect(() => {
-    loadData(0, pageSize);
-  }, [selectedCategoryId, selectedAgentEmail, ticketParam]);
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      loadData(0, pageSize, selectedStatus, searchQuery, selectedCategoryId, selectedAgentEmail, false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setCurrentPage(0);
+      loadData(0, pageSize, selectedStatus, searchQuery, selectedCategoryId, selectedAgentEmail, false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, selectedCategoryId, selectedAgentEmail, ticketParam]);
 
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage);
-    loadData(newPage, pageSize);
+    loadData(newPage, pageSize, selectedStatus, searchQuery, selectedCategoryId, selectedAgentEmail);
   };
 
   const handlePageSizeChange = (newSize: number) => {
     setPageSize(newSize);
     setCurrentPage(0);
-    loadData(0, newSize);
+    loadData(0, newSize, selectedStatus, searchQuery, selectedCategoryId, selectedAgentEmail);
+  };
+
+  const handleStatusChange = (newStatus: TicketStatus | 'ALL') => {
+    setSelectedStatus(newStatus);
+    setCurrentPage(0);
+    loadData(0, pageSize, newStatus, searchQuery, selectedCategoryId, selectedAgentEmail, false);
   };
 
   const handleCategoryChange = (catId: number | 'ALL') => {
     setSelectedCategoryId(catId);
     setCurrentPage(0);
+    loadData(0, pageSize, selectedStatus, searchQuery, catId, selectedAgentEmail, false);
   };
 
   const handleAgentChange = (ag: string | 'ALL' | 'UNASSIGNED') => {
     setSelectedAgentEmail(ag);
     setCurrentPage(0);
+    loadData(0, pageSize, selectedStatus, searchQuery, selectedCategoryId, ag, false);
   };
 
   const handleUpdateStatus = async (ticketId: string, status: TicketStatus, resolutionNote?: string) => {
@@ -235,7 +273,7 @@ function TicketsContent() {
             </button>
 
             <button
-              onClick={() => loadData(currentPage, pageSize, true)}
+              onClick={() => loadData(currentPage, pageSize, selectedStatus, searchQuery, selectedCategoryId, selectedAgentEmail, true)}
               disabled={isLoading}
               className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-2xs cursor-pointer"
               title="Refresh tickets from backend"
@@ -247,6 +285,11 @@ function TicketsContent() {
 
         <TicketTable
           tickets={displayedTickets}
+          metrics={metrics}
+          selectedStatus={selectedStatus}
+          onStatusChange={handleStatusChange}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
           categories={categories}
           selectedCategoryId={selectedCategoryId}
           onCategoryChange={handleCategoryChange}
