@@ -52,12 +52,12 @@ function CategoriesContent() {
   // Deleting category state
   const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
 
-  const loadData = async () => {
+  const loadData = async (forceRefresh = false) => {
     setIsLoading(true);
     try {
       const [catList, ticketList] = await Promise.all([
-        api.categories.getAll().catch(() => []),
-        api.tickets.getAll().catch(() => []),
+        api.categories.getAll({ forceRefresh }).catch(() => []),
+        api.tickets.getAll(undefined, { forceRefresh }).catch(() => []),
       ]);
       setCategories(catList || []);
       setTickets(ticketList || []);
@@ -70,7 +70,7 @@ function CategoriesContent() {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -164,7 +164,7 @@ function CategoriesContent() {
             )}
 
             <button
-              onClick={loadData}
+              onClick={() => loadData(true)}
               disabled={isLoading}
               className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-2xs cursor-pointer"
               title="Refresh categories"

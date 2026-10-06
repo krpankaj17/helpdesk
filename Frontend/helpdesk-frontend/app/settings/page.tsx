@@ -73,14 +73,14 @@ function SettingsContent() {
   const [deletingRoleId, setDeletingRoleId] = useState<number | null>(null);
 
   useEffect(() => {
-    loadRBAC();
-    loadMe();
+    loadRBAC(false);
+    loadMe(false);
   }, []);
 
-  const loadMe = async () => {
+  const loadMe = async (forceRefresh = false) => {
     setIsLoadingMe(true);
     try {
-      const data = await api.users.getMe();
+      const data = await api.users.getMe({ forceRefresh });
       setMeProfile(data);
     } catch {
       setMeProfile(contextUser);
@@ -89,12 +89,12 @@ function SettingsContent() {
     }
   };
 
-  const loadRBAC = async () => {
+  const loadRBAC = async (forceRefresh = false) => {
     setIsLoadingRBAC(true);
     try {
       const [r, p] = await Promise.all([
-        api.roles.getAll().catch(() => []),
-        api.permissions.getAll().catch(() => []),
+        api.roles.getAll({ forceRefresh }).catch(() => []),
+        api.permissions.getAll({ forceRefresh }).catch(() => []),
       ]);
       setRolesList(r);
       setPermissionsList(p);
@@ -301,7 +301,7 @@ function SettingsContent() {
               </button>
 
               <button
-                onClick={loadMe}
+                onClick={() => loadMe(true)}
                 className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
                 title="Refresh Profile"
               >
@@ -386,7 +386,7 @@ function SettingsContent() {
               </button>
 
               <button
-                onClick={loadRBAC}
+                onClick={() => loadRBAC(true)}
                 disabled={isLoadingRBAC}
                 className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
                 title="Refresh roles and permissions"

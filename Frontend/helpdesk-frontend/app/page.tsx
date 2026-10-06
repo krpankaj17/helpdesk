@@ -38,7 +38,7 @@ function DashboardContent() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalElements, setTotalElements] = useState(0);
 
-  const loadData = async (targetPage = currentPage, targetSize = pageSize) => {
+  const loadData = async (targetPage = currentPage, targetSize = pageSize, forceRefresh = false) => {
     setIsLoading(true);
     try {
       const isAgent = role === 'SUPPORT_AGENT' || (role as string) === 'AGENT';
@@ -50,10 +50,10 @@ function DashboardContent() {
           agentEmail: isAgent ? user?.email : undefined,
           unassigned: (isRequester || isAgent) ? undefined : true,
           sort: 'createdAt,desc',
-        }).catch(() => null),
-        api.categories.getAll().catch(() => []),
-        api.users.getAll().catch(() => []),
-        api.tickets.getDashboardMetrics().catch(() => null),
+        }, { forceRefresh }).catch(() => null),
+        api.categories.getAll({ forceRefresh }).catch(() => []),
+        api.users.getAll(0, 50, { forceRefresh }).catch(() => []),
+        api.tickets.getDashboardMetrics({ forceRefresh }).catch(() => null),
       ]);
 
       if (tPage) {
@@ -197,7 +197,7 @@ function DashboardContent() {
             </button>
 
             <button
-              onClick={() => loadData(currentPage, pageSize)}
+              onClick={() => loadData(currentPage, pageSize, true)}
               disabled={isLoading}
               className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-50 shadow-2xs transition-all cursor-pointer"
               title="Refresh tickets"

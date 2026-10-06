@@ -45,12 +45,12 @@ function SlaPoliciesContent() {
   // Delete state
   const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
 
-  const loadData = async () => {
+  const loadData = async (forceRefresh = false) => {
     setIsLoading(true);
     try {
       const [pList, prList] = await Promise.all([
-        api.slaPolicies.getAll().catch(() => []),
-        api.priorities.getAll().catch(() => []),
+        api.slaPolicies.getAll({ forceRefresh }).catch(() => []),
+        api.priorities.getAll({ forceRefresh }).catch(() => []),
       ]);
       setPolicies(pList || []);
       setPriorities(prList || []);
@@ -63,7 +63,7 @@ function SlaPoliciesContent() {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, []);
 
   const handleCreatePolicy = async (e: React.FormEvent) => {
@@ -176,7 +176,7 @@ function SlaPoliciesContent() {
             )}
 
             <button
-              onClick={loadData}
+              onClick={() => loadData(true)}
               disabled={isLoading}
               className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-2xs cursor-pointer"
               title="Refresh policies"

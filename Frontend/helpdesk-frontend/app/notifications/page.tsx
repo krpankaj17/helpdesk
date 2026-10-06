@@ -46,12 +46,12 @@ function NotificationsContent() {
   const [filterType, setFilterType] = useState<'ALL' | 'UNREAD' | 'ASSIGNMENT' | 'STATUS_CHANGE' | 'COMMENT'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const loadData = async () => {
+  const loadData = async (forceRefresh = false) => {
     setIsLoading(true);
     try {
       const [notifsRes, countRes] = await Promise.all([
-        api.notifications.getAll(false, 0, 50).catch(() => ({ content: [], totalElements: 0 })),
-        api.notifications.getUnreadCount().catch(() => ({ unreadCount: 0 }))
+        api.notifications.getAll(false, 0, 50, { forceRefresh }).catch(() => ({ content: [], totalElements: 0 })),
+        api.notifications.getUnreadCount({ forceRefresh }).catch(() => ({ unreadCount: 0 }))
       ]);
       setNotifications(notifsRes.content || []);
       setUnreadCount(countRes.unreadCount || 0);
@@ -63,7 +63,7 @@ function NotificationsContent() {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, []);
 
   const handleMarkAsRead = async (notificationId: number, e?: React.MouseEvent) => {
@@ -227,7 +227,7 @@ function NotificationsContent() {
             )}
 
             <button
-              onClick={loadData}
+              onClick={() => loadData(true)}
               disabled={isLoading}
               className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-2xs cursor-pointer"
               title="Refresh notifications"

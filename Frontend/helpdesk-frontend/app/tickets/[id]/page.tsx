@@ -91,16 +91,16 @@ function TicketDetailContent() {
     ? ['OPEN', 'IN_PROGRESS', 'WAITING_ON_REQUESTOR', 'RESOLVED', 'CLOSED']
     : ['OPEN', 'IN_PROGRESS', 'WAITING_ON_REQUESTOR', 'RESOLVED'];
 
-  const loadTicket = async () => {
+  const loadTicket = async (forceRefresh = false) => {
     if (!ticketId) return;
     setIsLoading(true);
     try {
       const [tData, cList, uList, comList, actList] = await Promise.all([
-        api.tickets.getById(ticketId),
-        api.categories.getAll().catch(() => []),
-        api.users.getAll().catch(() => []),
-        api.tickets.getComments(ticketId).catch(() => []),
-        api.tickets.getActivities(ticketId).catch(() => []),
+        api.tickets.getById(ticketId, { forceRefresh }),
+        api.categories.getAll({ forceRefresh }).catch(() => []),
+        api.users.getAll(0, 50, { forceRefresh }).catch(() => []),
+        api.tickets.getComments(ticketId, { forceRefresh }).catch(() => []),
+        api.tickets.getActivities(ticketId, { forceRefresh }).catch(() => []),
       ]);
 
       setTicket(tData);
@@ -115,7 +115,7 @@ function TicketDetailContent() {
       setDraftResolutionNote('');
 
       if (canInternalNotes) {
-        api.tickets.getNotes(ticketId).then(nList => setNotes(nList || [])).catch(() => []);
+        api.tickets.getNotes(ticketId, { forceRefresh }).then(nList => setNotes(nList || [])).catch(() => []);
       }
     } catch (err: any) {
       toast.error(err.message || 'Failed to load ticket details');
@@ -125,7 +125,7 @@ function TicketDetailContent() {
   };
 
   useEffect(() => {
-    loadTicket();
+    loadTicket(false);
   }, [ticketId]);
 
   // Scroll to bottom of chat when comments or notes change
@@ -171,7 +171,7 @@ function TicketDetailContent() {
         );
       }
 
-      await loadTicket();
+      await loadTicket(true);
       toast.success('Changes saved successfully');
       setSaveSuccessMsg('Changes saved successfully');
       setTimeout(() => setSaveSuccessMsg(null), 3500);
@@ -229,7 +229,7 @@ function TicketDetailContent() {
 
       setChatMessage('');
       setChatAttachments([]);
-      const updatedActs = await api.tickets.getActivities(ticket.ticketPublicId).catch(() => []);
+      const updatedActs = await api.tickets.getActivities(ticket.ticketPublicId, { forceRefresh: true }).catch(() => []);
       setActivities(updatedActs);
       toast.success(activeTab === 'notes' ? 'Internal note added' : 'Message sent');
     } catch (err: any) {
@@ -315,6 +315,15 @@ function TicketDetailContent() {
             >
               <ArrowLeft className="w-4 h-4" />
             </Link>
+
+            <button
+              onClick={() => loadTicket(true)}
+              disabled={isLoading}
+              className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-2xs transition-colors cursor-pointer"
+              title="Refresh Ticket"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
 
             <div>
               <div className="flex items-center gap-2 mb-0.5">

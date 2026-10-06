@@ -94,7 +94,7 @@ export default function TicketModal({
     : ['OPEN', 'IN_PROGRESS', 'WAITING_ON_REQUESTOR', 'RESOLVED'];
 
   // Load ticket discussions, notes, activities & assignments from Spring Boot
-  const loadTicketData = async (ticketId: string) => {
+  const loadTicketData = async (ticketId: string, forceRefresh = false) => {
     setIsLoadingFeed(true);
     try {
       const promises: [
@@ -103,10 +103,10 @@ export default function TicketModal({
         Promise<TicketNote[]>,
         Promise<TicketAssignment[]>
       ] = [
-        api.tickets.getComments(ticketId).catch(() => []),
-        api.tickets.getActivities(ticketId).catch(() => []),
-        canInternalNotes ? api.tickets.getNotes(ticketId).catch(() => []) : Promise.resolve([]),
-        api.tickets.getAssignments(ticketId).catch(() => [])
+        api.tickets.getComments(ticketId, { forceRefresh }).catch(() => []),
+        api.tickets.getActivities(ticketId, { forceRefresh }).catch(() => []),
+        canInternalNotes ? api.tickets.getNotes(ticketId, { forceRefresh }).catch(() => []) : Promise.resolve([]),
+        api.tickets.getAssignments(ticketId, { forceRefresh }).catch(() => [])
       ];
 
       const [cList, aList, nList, asList] = await Promise.all(promises);
@@ -191,7 +191,7 @@ export default function TicketModal({
         ticket.status = draftStatus;
       }
 
-      await loadTicketData(ticket.ticketPublicId);
+      await loadTicketData(ticket.ticketPublicId, true);
       toast.success('Changes saved successfully!');
       setSaveSuccessMsg('Saved successfully!');
       setTimeout(() => setSaveSuccessMsg(null), 3000);
@@ -256,7 +256,7 @@ export default function TicketModal({
       setComments(prev => [...prev, created]);
       setCommentInput('');
       setCommentAttachments([]);
-      const updatedActs = await api.tickets.getActivities(ticket.ticketPublicId).catch(() => []);
+      const updatedActs = await api.tickets.getActivities(ticket.ticketPublicId, { forceRefresh: true }).catch(() => []);
       setActivities(updatedActs);
       toast.success('Comment posted successfully');
     } catch (err: any) {
@@ -278,7 +278,7 @@ export default function TicketModal({
       setNotes(prev => [...prev, created]);
       setNoteInput('');
       setNoteAttachments([]);
-      const updatedActs = await api.tickets.getActivities(ticket.ticketPublicId).catch(() => []);
+      const updatedActs = await api.tickets.getActivities(ticket.ticketPublicId, { forceRefresh: true }).catch(() => []);
       setActivities(updatedActs);
       toast.success('Internal note added');
     } catch (err: any) {
@@ -657,6 +657,17 @@ export default function TicketModal({
                   <span>Activity History ({activities.length})</span>
                 </button>
               </div>
+
+              <button
+                type="button"
+                onClick={() => loadTicketData(ticket.ticketPublicId, true)}
+                disabled={isLoadingFeed}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                title="Refresh comments and activity feed"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingFeed ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
             </div>
 
             {/* TAB CONTENT: Comments */}

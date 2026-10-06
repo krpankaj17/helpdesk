@@ -27,11 +27,11 @@ function UsersContent() {
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
 
-  const loadData = async () => {
+  const loadData = async (forceRefresh = false) => {
     try {
       const [uList, tList] = await Promise.all([
-        api.users.getAll().catch(() => []),
-        api.tickets.getAll().catch(() => []),
+        api.users.getAll(0, 50, { forceRefresh }).catch(() => []),
+        api.tickets.getAll(undefined, { forceRefresh }).catch(() => []),
       ]);
       setUsers(uList || []);
 
@@ -56,7 +56,7 @@ function UsersContent() {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, []);
 
   const handleCreateUser = async (userReq: CreateUserRequest) => {
@@ -88,6 +88,7 @@ function UsersContent() {
         <UserTable
           users={users}
           ticketCountsByAgent={ticketCounts}
+          onRefresh={() => loadData(true)}
           onAddUser={() => {
             if (!canManageUsers) {
               toast.warning('Only ADMIN has USER_MANAGE authority to onboard staff.');
@@ -122,7 +123,7 @@ function UsersContent() {
         isOpen={!!editingUser}
         user={editingUser}
         onClose={() => setEditingUser(null)}
-        onSuccess={loadData}
+        onSuccess={() => loadData(true)}
       />
     </div>
   );

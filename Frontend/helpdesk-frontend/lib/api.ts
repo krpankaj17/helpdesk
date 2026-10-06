@@ -19,6 +19,10 @@ import {
   PaginatedResponse,
   AttachmentResponse
 } from '@/types';
+import { apiCache, CACHE_TTL, CacheOptions } from './cache';
+
+export { apiCache, CACHE_TTL };
+export type { CacheOptions };
 
 // Connect to Spring Boot backend directly, or through Next.js reverse proxy (/backend-api)
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL
@@ -208,6 +212,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}, isRetry =
       }
 
       tokenStorage.clear();
+      apiCache.clear();
       if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
         window.location.href = '/login';
       }
@@ -227,6 +232,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}, isRetry =
 export const api = {
   auth: {
     async login(email: string, password: string): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+      apiCache.clear();
       const res = await request<{ accessToken: string; refreshToken: string; tokenType: string; expiresIn: number }>('/login', {
         method: 'POST',
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
@@ -236,7 +242,7 @@ export const api = {
       tokenStorage.setRefreshToken(res.refreshToken);
 
       // Fetch authenticated user profile from /users/me
-      const user = await api.users.getMe();
+      const user = await api.users.getMe({ forceRefresh: true });
       if (typeof window !== 'undefined') {
         localStorage.setItem('helpdesk_current_user', JSON.stringify(user));
       }
@@ -261,6 +267,7 @@ export const api = {
     },
 
     logout() {
+      apiCache.clear();
       tokenStorage.clear();
     }
   },
@@ -276,7 +283,7 @@ export const api = {
       page?: number;
       size?: number;
       sort?: string;
-    }): Promise<PaginatedResponse<Ticket>> {
+    }, options?: CacheOptions | { forceRefresh?: boolean }): Promise<PaginatedResponse<Ticket>> {
       const query = new URLSearchParams();
       if (params?.search) query.append('search', params.search);
       if (params?.status) query.append('status', params.status);
@@ -288,47 +295,58 @@ export const api = {
       query.append('page', (params?.page ?? 0).toString());
       query.append('size', (params?.size ?? 10).toString());
 
-      const data = await request<PaginatedResponse<Ticket>>(`/ticket?${query.toString()}`);
-      let ticketList = data?.content || [];
+      const cacheKey = `tickets:paginated:${query.toString()}`;
+      return apiCache.fetchWithCache(
+        cacheKey,
+        async () => {
+          const data = await request<PaginatedResponse<Ticket>>(`/ticket?${query.toString()}`);
+          let ticketList = data?.content || [];
 
-      // If backend hasn't populated assignedAgentName directly, enrich active assignments
-      const needsEnrichment = ticketList.some(t => !t.assignedAgentName && !t.assignedAgentEmail);
-      if (needsEnrichment && ticketList.length > 0) {
-        try {
-          const enrichPromises = ticketList.map(async (t) => {
-            if (t.assignedAgentName) return t;
+          // If backend hasn't populated assignedAgentName directly, enrich active assignments
+          const needsEnrichment = ticketList.some(t => !t.assignedAgentName && !t.assignedAgentEmail);
+          if (needsEnrichment && ticketList.length > 0) {
             try {
-              const assignments = await request<TicketAssignment[]>(`/ticket/${t.ticketPublicId}/assignments`).catch(() => []);
-              const active = assignments?.find(a => a.isActive);
-              if (active) {
-                return {
-                  ...t,
-                  assignedAgentPublicId: active.assignedToPublicId,
-                  assignedAgentName: active.assignedToName,
-                  assignedAgentEmail: active.assignedToEmail,
-                };
-              }
+              const enrichPromises = ticketList.map(async (t) => {
+                if (t.assignedAgentName) return t;
+                try {
+                  const assignments = await request<TicketAssignment[]>(`/ticket/${t.ticketPublicId}/assignments`).catch(() => []);
+                  const active = assignments?.find(a => a.isActive);
+                  if (active) {
+                    return {
+                      ...t,
+                      assignedAgentPublicId: active.assignedToPublicId,
+                      assignedAgentName: active.assignedToName,
+                      assignedAgentEmail: active.assignedToEmail,
+                    };
+                  }
+                } catch {
+                  // Ignore individual lookup errors
+                }
+                return t;
+              });
+              ticketList = await Promise.all(enrichPromises);
             } catch {
-              // Ignore individual lookup errors
+              // If bulk enrichment fails, return base tickets
             }
-            return t;
-          });
-          ticketList = await Promise.all(enrichPromises);
-        } catch {
-          // If bulk enrichment fails, return base tickets
-        }
-      }
+          }
 
-      return {
-        content: ticketList,
-        totalElements: data?.totalElements ?? ticketList.length,
-        totalPages: data?.totalPages ?? 1,
-        number: data?.number ?? (params?.page ?? 0),
-        size: data?.size ?? (params?.size ?? 10),
-        first: data?.first ?? true,
-        last: data?.last ?? true,
-        empty: data?.empty ?? ticketList.length === 0,
-      };
+          return {
+            content: ticketList,
+            totalElements: data?.totalElements ?? ticketList.length,
+            totalPages: data?.totalPages ?? 1,
+            number: data?.number ?? (params?.page ?? 0),
+            size: data?.size ?? (params?.size ?? 10),
+            first: data?.first ?? true,
+            last: data?.last ?? true,
+            empty: data?.empty ?? ticketList.length === 0,
+          };
+        },
+        {
+          ttl: CACHE_TTL.TICKETS,
+          tag: 'tickets',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async getAll(params?: {
@@ -340,82 +358,149 @@ export const api = {
       agentEmail?: string;
       page?: number;
       size?: number;
-    }): Promise<Ticket[]> {
+    }, options?: CacheOptions | { forceRefresh?: boolean }): Promise<Ticket[]> {
       const pageData = await this.getPaginated({
         ...params,
         size: params?.size ?? 100,
-      });
+      }, options);
       return pageData.content;
     },
 
-    async getById(publicId: string): Promise<Ticket> {
-      return await request<Ticket>(`/ticket/${publicId}`);
+    async getById(publicId: string, options?: CacheOptions | { forceRefresh?: boolean }): Promise<Ticket> {
+      return apiCache.fetchWithCache(
+        `tickets:${publicId}`,
+        () => request<Ticket>(`/ticket/${publicId}`),
+        {
+          ttl: CACHE_TTL.TICKETS,
+          tag: 'tickets',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async create(ticketReq: CreateTicketRequest): Promise<Ticket> {
-      return await request<Ticket>('/ticket', {
+      const res = await request<Ticket>('/ticket', {
         method: 'POST',
         body: JSON.stringify(ticketReq),
       });
+      apiCache.invalidateTags(['tickets', 'dashboard', 'categories']);
+      return res;
     },
 
-
     async updateStatus(publicId: string, status: TicketStatus, resolutionNote?: string): Promise<Ticket> {
-      return await request<Ticket>(`/ticket/${publicId}/status`, {
+      const res = await request<Ticket>(`/ticket/${publicId}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ 
           status, 
           resolutionNote: resolutionNote || undefined 
         }),
       });
+      apiCache.invalidateTags(['tickets', 'dashboard']);
+      apiCache.delete(`tickets:${publicId}`);
+      return res;
     },
 
     async updateCategory(publicId: string, categoryId: number): Promise<Ticket> {
-      return await request<Ticket>(`/ticket/${publicId}/category`, {
+      const res = await request<Ticket>(`/ticket/${publicId}/category`, {
         method: 'PATCH',
         body: JSON.stringify({ categoryId }),
       });
+      apiCache.invalidateTags(['tickets', 'dashboard', 'categories']);
+      apiCache.delete(`tickets:${publicId}`);
+      return res;
     },
 
     async assign(publicId: string, agentEmail: string): Promise<TicketAssignment> {
-      return await request<TicketAssignment>(`/ticket/${publicId}/assign`, {
+      const res = await request<TicketAssignment>(`/ticket/${publicId}/assign`, {
         method: 'POST',
         body: JSON.stringify({ agentEmail }),
       });
+      apiCache.invalidateTags(['tickets', 'dashboard', 'users']);
+      apiCache.delete(`tickets:${publicId}`);
+      apiCache.delete(`tickets:${publicId}:assignments`);
+      return res;
     },
 
-    async getAssignments(publicId: string): Promise<TicketAssignment[]> {
-      return await request<TicketAssignment[]>(`/ticket/${publicId}/assignments`);
+    async getAssignments(publicId: string, options?: CacheOptions | { forceRefresh?: boolean }): Promise<TicketAssignment[]> {
+      return apiCache.fetchWithCache(
+        `tickets:${publicId}:assignments`,
+        () => request<TicketAssignment[]>(`/ticket/${publicId}/assignments`),
+        {
+          ttl: CACHE_TTL.TICKETS,
+          tag: 'tickets',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
-    async getDashboardMetrics(): Promise<DashboardMetrics> {
-      return await request<DashboardMetrics>('/ticket/dashboard');
+    async getDashboardMetrics(options?: CacheOptions | { forceRefresh?: boolean }): Promise<DashboardMetrics> {
+      return apiCache.fetchWithCache(
+        'dashboard:metrics',
+        () => request<DashboardMetrics>('/ticket/dashboard'),
+        {
+          ttl: CACHE_TTL.METRICS,
+          tag: 'dashboard',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
-    async getActivities(publicId: string): Promise<TicketActivity[]> {
-      return await request<TicketActivity[]>(`/ticket/${publicId}/activities`);
+    async getActivities(publicId: string, options?: CacheOptions | { forceRefresh?: boolean }): Promise<TicketActivity[]> {
+      return apiCache.fetchWithCache(
+        `tickets:${publicId}:activities`,
+        () => request<TicketActivity[]>(`/ticket/${publicId}/activities`),
+        {
+          ttl: CACHE_TTL.TICKETS,
+          tag: 'tickets',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
-    async getComments(publicId: string): Promise<TicketComment[]> {
-      return await request<TicketComment[]>(`/ticket/${publicId}/comments`);
+    async getComments(publicId: string, options?: CacheOptions | { forceRefresh?: boolean }): Promise<TicketComment[]> {
+      return apiCache.fetchWithCache(
+        `tickets:${publicId}:comments`,
+        () => request<TicketComment[]>(`/ticket/${publicId}/comments`),
+        {
+          ttl: CACHE_TTL.TICKETS,
+          tag: 'tickets',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async addComment(publicId: string, description: string, attachments: any[] = []): Promise<TicketComment> {
-      return await request<TicketComment>(`/ticket/${publicId}/comments`, {
+      const res = await request<TicketComment>(`/ticket/${publicId}/comments`, {
         method: 'POST',
         body: JSON.stringify({ description, attachments }),
       });
+      apiCache.invalidateTags(['tickets', 'dashboard']);
+      apiCache.delete(`tickets:${publicId}:comments`);
+      apiCache.delete(`tickets:${publicId}:activities`);
+      return res;
     },
 
-    async getNotes(publicId: string): Promise<TicketNote[]> {
-      return await request<TicketNote[]>(`/ticket/${publicId}/notes`);
+    async getNotes(publicId: string, options?: CacheOptions | { forceRefresh?: boolean }): Promise<TicketNote[]> {
+      return apiCache.fetchWithCache(
+        `tickets:${publicId}:notes`,
+        () => request<TicketNote[]>(`/ticket/${publicId}/notes`),
+        {
+          ttl: CACHE_TTL.TICKETS,
+          tag: 'tickets',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async addNote(publicId: string, description: string, attachments: any[] = []): Promise<TicketNote> {
-      return await request<TicketNote>(`/ticket/${publicId}/notes`, {
+      const res = await request<TicketNote>(`/ticket/${publicId}/notes`, {
         method: 'POST',
         body: JSON.stringify({ description, attachments }),
       });
+      apiCache.invalidateTags(['tickets', 'dashboard']);
+      apiCache.delete(`tickets:${publicId}:notes`);
+      apiCache.delete(`tickets:${publicId}:activities`);
+      return res;
     },
 
     async upload(file: File): Promise<AttachmentResponse> {
@@ -429,74 +514,121 @@ export const api = {
   },
 
   notifications: {
-    async getAll(unreadOnly = false, page = 0, size = 30): Promise<{ content: NotificationItem[]; totalElements: number }> {
+    async getAll(unreadOnly = false, page = 0, size = 30, options?: CacheOptions | { forceRefresh?: boolean }): Promise<{ content: NotificationItem[]; totalElements: number }> {
       const query = new URLSearchParams();
       if (unreadOnly) query.append('unreadOnly', 'true');
       query.append('page', page.toString());
       query.append('size', size.toString());
 
-      const data = await request<any>(`/notifications?${query.toString()}`);
-      const content = Array.isArray(data) ? data : (data?.content || []);
-      return {
-        content: content.map((n: any) => ({
-          notificationId: n.notificationId ?? n.id,
-          ticketId: n.ticketId,
-          ticketPublicId: n.ticketPublicId ? n.ticketPublicId.toString() : undefined,
-          title: n.title,
-          message: n.message,
-          type: n.type,
-          isRead: Boolean(n.isRead),
-          createdAt: n.createdAt,
-        })),
-        totalElements: data?.totalElements ?? content.length,
-      };
+      return apiCache.fetchWithCache(
+        `notifications:${unreadOnly}:${page}:${size}`,
+        async () => {
+          const data = await request<any>(`/notifications?${query.toString()}`);
+          const content = Array.isArray(data) ? data : (data?.content || []);
+          return {
+            content: content.map((n: any) => ({
+              notificationId: n.notificationId ?? n.id,
+              ticketId: n.ticketId,
+              ticketPublicId: n.ticketPublicId ? n.ticketPublicId.toString() : undefined,
+              title: n.title,
+              message: n.message,
+              type: n.type,
+              isRead: Boolean(n.isRead),
+              createdAt: n.createdAt,
+            })),
+            totalElements: data?.totalElements ?? content.length,
+          };
+        },
+        {
+          ttl: CACHE_TTL.NOTIFICATIONS,
+          tag: 'notifications',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
-    async getUnreadCount(): Promise<{ unreadCount: number }> {
-      const res = await request<{ unreadCount: number }>('/notifications/unread-count');
-      return { unreadCount: res?.unreadCount || 0 };
+    async getUnreadCount(options?: CacheOptions | { forceRefresh?: boolean }): Promise<{ unreadCount: number }> {
+      return apiCache.fetchWithCache(
+        'notifications:unreadCount',
+        async () => {
+          const res = await request<{ unreadCount: number }>('/notifications/unread-count');
+          return { unreadCount: res?.unreadCount || 0 };
+        },
+        {
+          ttl: CACHE_TTL.NOTIFICATIONS,
+          tag: 'notifications',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async markAsRead(id: number): Promise<NotificationItem> {
-      return await request<NotificationItem>(`/notifications/${id}/read`, {
+      const res = await request<NotificationItem>(`/notifications/${id}/read`, {
         method: 'PATCH',
       });
+      apiCache.invalidateTag('notifications');
+      return res;
     },
 
     async markAllAsRead(): Promise<{ message: string }> {
-      return await request<{ message: string }>('/notifications/read-all', {
+      const res = await request<{ message: string }>('/notifications/read-all', {
         method: 'PATCH',
       });
+      apiCache.invalidateTag('notifications');
+      return res;
     },
 
     async delete(id: number): Promise<void> {
       await request<void>(`/notifications/${id}`, {
         method: 'DELETE',
       });
+      apiCache.invalidateTag('notifications');
     },
 
     async clearAll(): Promise<{ message: string }> {
-      return await request<{ message: string }>('/notifications/clear-all', {
+      const res = await request<{ message: string }>('/notifications/clear-all', {
         method: 'DELETE',
       });
+      apiCache.invalidateTag('notifications');
+      return res;
     }
   },
 
   users: {
-    async getAll(page = 0, size = 50): Promise<User[]> {
-      const data = await request<{ content: User[] }>(`/users?page=${page}&size=${size}`);
-      return data?.content || [];
+    async getAll(page = 0, size = 50, options?: CacheOptions | { forceRefresh?: boolean }): Promise<User[]> {
+      return apiCache.fetchWithCache(
+        `users:${page}:${size}`,
+        async () => {
+          const data = await request<{ content: User[] }>(`/users?page=${page}&size=${size}`);
+          return data?.content || [];
+        },
+        {
+          ttl: CACHE_TTL.USERS,
+          tag: 'users',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
-    async getMe(): Promise<User> {
-      return await request<User>('/users/me');
+    async getMe(options?: CacheOptions | { forceRefresh?: boolean }): Promise<User> {
+      return apiCache.fetchWithCache(
+        'users:me',
+        () => request<User>('/users/me'),
+        {
+          ttl: CACHE_TTL.USERS,
+          tag: 'users',
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async create(userReq: CreateUserRequest): Promise<User> {
-      return await request<User>('/users', {
+      const res = await request<User>('/users', {
         method: 'POST',
         body: JSON.stringify(userReq),
       });
+      apiCache.invalidateTags(['users', 'tickets']);
+      return res;
     },
 
     async update(publicId: string, userReq: { name?: string; email?: string; password?: string; roleId?: number }): Promise<User> {
@@ -506,61 +638,100 @@ export const api = {
       if (userReq.password !== undefined && userReq.password !== '') payload.password = userReq.password;
       if (userReq.roleId !== undefined) payload.roleId = userReq.roleId;
 
-      return await request<User>(`/users/${publicId}`, {
+      const res = await request<User>(`/users/${publicId}`, {
         method: 'PUT',
         body: JSON.stringify(payload),
       });
+      apiCache.invalidateTags(['users', 'tickets']);
+      apiCache.delete('users:me');
+      return res;
     },
 
     async updateStatus(publicId: string, isActive: boolean): Promise<User> {
-      return await request<User>(`/users/${publicId}/status`, {
+      const res = await request<User>(`/users/${publicId}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ isActive }),
       });
+      apiCache.invalidateTags(['users', 'tickets']);
+      return res;
     },
 
     async delete(publicId: string): Promise<void> {
       await request(`/users/${publicId}`, {
         method: 'DELETE',
       });
+      apiCache.invalidateTags(['users', 'tickets']);
     }
   },
 
   roles: {
-    async getAll(): Promise<Role[]> {
-      const data = await request<any>('/roles?size=50');
-      const items = Array.isArray(data) ? data : (data?.content || []);
-      return items.map((r: any) => ({
-        roleId: r.roleId ?? r.id,
-        roleName: r.roleName ?? r.name,
-        id: r.id ?? r.roleId,
-        name: r.name ?? r.roleName,
-        description: r.description,
-        permissions: r.permissions,
-      }));
+    async getAll(options?: CacheOptions | { forceRefresh?: boolean }): Promise<Role[]> {
+      return apiCache.fetchWithCache(
+        'roles:all',
+        async () => {
+          const data = await request<any>('/roles?size=50');
+          const items = Array.isArray(data) ? data : (data?.content || []);
+          return items.map((r: any) => ({
+            roleId: r.roleId ?? r.id,
+            roleName: r.roleName ?? r.name,
+            id: r.id ?? r.roleId,
+            name: r.name ?? r.roleName,
+            description: r.description,
+            permissions: r.permissions,
+          }));
+        },
+        {
+          ttl: CACHE_TTL.STATIC,
+          tag: 'roles',
+          persist: true,
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
-    async getById(id: number): Promise<Role> {
-      const r = await request<any>(`/roles/${id}`);
-      return {
-        roleId: r.roleId ?? r.id,
-        roleName: r.roleName ?? r.name,
-        id: r.id ?? r.roleId,
-        name: r.name ?? r.roleName,
-        description: r.description,
-        permissions: r.permissions,
-      };
+    async getById(id: number, options?: CacheOptions | { forceRefresh?: boolean }): Promise<Role> {
+      return apiCache.fetchWithCache(
+        `roles:${id}`,
+        async () => {
+          const r = await request<any>(`/roles/${id}`);
+          return {
+            roleId: r.roleId ?? r.id,
+            roleName: r.roleName ?? r.name,
+            id: r.id ?? r.roleId,
+            name: r.name ?? r.roleName,
+            description: r.description,
+            permissions: r.permissions,
+          };
+        },
+        {
+          ttl: CACHE_TTL.STATIC,
+          tag: 'roles',
+          persist: true,
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
-    async getPermissions(roleId: number): Promise<Permission[]> {
-      const data = await request<any>(`/roles/${roleId}/permissions`);
-      const items = Array.isArray(data) ? data : (data?.content || []);
-      return items.map((p: any) => ({
-        permissionId: p.permissionId ?? p.id,
-        id: p.id ?? p.permissionId,
-        name: p.name,
-        description: p.description,
-      }));
+    async getPermissions(roleId: number, options?: CacheOptions | { forceRefresh?: boolean }): Promise<Permission[]> {
+      return apiCache.fetchWithCache(
+        `roles:${roleId}:permissions`,
+        async () => {
+          const data = await request<any>(`/roles/${roleId}/permissions`);
+          const items = Array.isArray(data) ? data : (data?.content || []);
+          return items.map((p: any) => ({
+            permissionId: p.permissionId ?? p.id,
+            id: p.id ?? p.permissionId,
+            name: p.name,
+            description: p.description,
+          }));
+        },
+        {
+          ttl: CACHE_TTL.STATIC,
+          tag: 'roles',
+          persist: true,
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async create(roleData: { name: string; description?: string }): Promise<Role> {
@@ -568,6 +739,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(roleData),
       });
+      apiCache.invalidateTag('roles');
       return {
         roleId: r.roleId ?? r.id,
         roleName: r.roleName ?? r.name,
@@ -583,6 +755,7 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ permissionIds }),
       });
+      apiCache.invalidateTag('roles');
       return {
         roleId: r.roleId ?? r.id,
         roleName: r.roleName ?? r.name,
@@ -598,6 +771,7 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(roleData),
       });
+      apiCache.invalidateTag('roles');
       return {
         roleId: r.roleId ?? r.id,
         roleName: r.roleName ?? r.name,
@@ -612,30 +786,53 @@ export const api = {
       await request<void>(`/roles/${id}`, {
         method: 'DELETE',
       });
+      apiCache.invalidateTag('roles');
     }
   },
 
   permissions: {
-    async getAll(): Promise<Permission[]> {
-      const data = await request<any>('/permissions?size=100');
-      const items = Array.isArray(data) ? data : (data?.content || []);
-      return items.map((p: any) => ({
-        permissionId: p.permissionId ?? p.id,
-        id: p.id ?? p.permissionId,
-        name: p.name,
-        description: p.description,
-      }));
+    async getAll(options?: CacheOptions | { forceRefresh?: boolean }): Promise<Permission[]> {
+      return apiCache.fetchWithCache(
+        'permissions:all',
+        async () => {
+          const data = await request<any>('/permissions?size=100');
+          const items = Array.isArray(data) ? data : (data?.content || []);
+          return items.map((p: any) => ({
+            permissionId: p.permissionId ?? p.id,
+            id: p.id ?? p.permissionId,
+            name: p.name,
+            description: p.description,
+          }));
+        },
+        {
+          ttl: CACHE_TTL.STATIC,
+          tag: 'permissions',
+          persist: true,
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
-    async getAllDetailed(): Promise<Permission[]> {
-      const data = await request<any>('/permissions/all');
-      const items = Array.isArray(data) ? data : (data?.content || []);
-      return items.map((p: any) => ({
-        permissionId: p.permissionId ?? p.id,
-        id: p.id ?? p.permissionId,
-        name: p.name,
-        description: p.description,
-      }));
+    async getAllDetailed(options?: CacheOptions | { forceRefresh?: boolean }): Promise<Permission[]> {
+      return apiCache.fetchWithCache(
+        'permissions:detailed',
+        async () => {
+          const data = await request<any>('/permissions/all');
+          const items = Array.isArray(data) ? data : (data?.content || []);
+          return items.map((p: any) => ({
+            permissionId: p.permissionId ?? p.id,
+            id: p.id ?? p.permissionId,
+            name: p.name,
+            description: p.description,
+          }));
+        },
+        {
+          ttl: CACHE_TTL.STATIC,
+          tag: 'permissions',
+          persist: true,
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async create(permData: { name: string; description?: string }): Promise<Permission> {
@@ -643,6 +840,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(permData),
       });
+      apiCache.invalidateTags(['permissions', 'roles']);
       return {
         permissionId: p.permissionId ?? p.id,
         id: p.id ?? p.permissionId,
@@ -656,6 +854,7 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(permData),
       });
+      apiCache.invalidateTags(['permissions', 'roles']);
       return {
         permissionId: p.permissionId ?? p.id,
         id: p.id ?? p.permissionId,
@@ -668,18 +867,30 @@ export const api = {
       await request<void>(`/permissions/${id}`, {
         method: 'DELETE',
       });
+      apiCache.invalidateTags(['permissions', 'roles']);
     }
   },
 
   categories: {
-    async getAll(): Promise<TicketCategory[]> {
-      const data = await request<{ content: any[] }>('/category?size=50');
-      return (data?.content || []).map((c: any) => ({
-        categoryId: c.categoryId ?? c.id,
-        name: c.name,
-        description: c.description,
-        ticketCount: c.ticketCount,
-      }));
+    async getAll(options?: CacheOptions | { forceRefresh?: boolean }): Promise<TicketCategory[]> {
+      return apiCache.fetchWithCache(
+        'categories:all',
+        async () => {
+          const data = await request<{ content: any[] }>('/category?size=50');
+          return (data?.content || []).map((c: any) => ({
+            categoryId: c.categoryId ?? c.id,
+            name: c.name,
+            description: c.description,
+            ticketCount: c.ticketCount,
+          }));
+        },
+        {
+          ttl: CACHE_TTL.STATIC,
+          tag: 'categories',
+          persist: true,
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async create(catData: { name: string; description: string }): Promise<TicketCategory> {
@@ -687,6 +898,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(catData),
       });
+      apiCache.invalidateTags(['categories', 'tickets', 'dashboard']);
       return {
         categoryId: c.categoryId ?? c.id,
         name: c.name,
@@ -700,6 +912,7 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(catData),
       });
+      apiCache.invalidateTags(['categories', 'tickets', 'dashboard']);
       return {
         categoryId: c.categoryId ?? c.id,
         name: c.name,
@@ -712,10 +925,11 @@ export const api = {
       await request<void>(`/category/${id}`, {
         method: 'DELETE',
       });
+      apiCache.invalidateTags(['categories', 'tickets', 'dashboard']);
     },
 
     async assignTickets(categoryId: number, ticketPublicIds: string[]): Promise<Ticket[]> {
-      return await Promise.all(
+      const res = await Promise.all(
         ticketPublicIds.map(publicId =>
           request<Ticket>(`/ticket/${publicId}/category`, {
             method: 'PATCH',
@@ -723,31 +937,55 @@ export const api = {
           })
         )
       );
+      apiCache.invalidateTags(['categories', 'tickets', 'dashboard']);
+      return res;
     }
   },
 
   priorities: {
-    async getAll(): Promise<Priority[]> {
-      const data = await request<{ content: any[] }>('/priority?size=50');
-      return (data?.content || []).map((p: any) => ({
-        priorityId: p.priorityId ?? p.id,
-        name: p.name,
-        description: p.description,
-      }));
+    async getAll(options?: CacheOptions | { forceRefresh?: boolean }): Promise<Priority[]> {
+      return apiCache.fetchWithCache(
+        'priorities:all',
+        async () => {
+          const data = await request<{ content: any[] }>('/priority?size=50');
+          return (data?.content || []).map((p: any) => ({
+            priorityId: p.priorityId ?? p.id,
+            name: p.name,
+            description: p.description,
+          }));
+        },
+        {
+          ttl: CACHE_TTL.STATIC,
+          tag: 'priorities',
+          persist: true,
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     }
   },
 
   slaPolicies: {
-    async getAll(): Promise<SlaPolicy[]> {
-      const data = await request<any[]>('/sla-policies');
-      return (data || []).map((p: any) => ({
-        slaPolicyId: p.slaPolicyId ?? p.policyId ?? p.id,
-        priorityId: p.priorityId,
-        priorityName: p.priorityName,
-        description: p.description,
-        responseTimeMinutes: p.responseTimeMinutes,
-        resolutionTimeMinutes: p.resolutionTimeMinutes,
-      }));
+    async getAll(options?: CacheOptions | { forceRefresh?: boolean }): Promise<SlaPolicy[]> {
+      return apiCache.fetchWithCache(
+        'sla:all',
+        async () => {
+          const data = await request<any[]>('/sla-policies');
+          return (data || []).map((p: any) => ({
+            slaPolicyId: p.slaPolicyId ?? p.policyId ?? p.id,
+            priorityId: p.priorityId,
+            priorityName: p.priorityName,
+            description: p.description,
+            responseTimeMinutes: p.responseTimeMinutes,
+            resolutionTimeMinutes: p.resolutionTimeMinutes,
+          }));
+        },
+        {
+          ttl: CACHE_TTL.STATIC,
+          tag: 'sla',
+          persist: true,
+          ...(typeof options === 'object' ? options : {}),
+        }
+      );
     },
 
     async create(policyReq: {
@@ -760,6 +998,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(policyReq),
       });
+      apiCache.invalidateTag('sla');
       return {
         slaPolicyId: p.slaPolicyId ?? p.policyId ?? p.id,
         priorityId: p.priorityId,
@@ -780,6 +1019,7 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(policyReq),
       });
+      apiCache.invalidateTag('sla');
       return {
         slaPolicyId: p.slaPolicyId ?? p.policyId ?? p.id,
         priorityId: p.priorityId,
@@ -794,6 +1034,46 @@ export const api = {
       await request<void>(`/sla-policies/${id}`, {
         method: 'DELETE',
       });
+      apiCache.invalidateTag('sla');
+    }
+  },
+
+  cache: {
+    get<T>(key: string, allowStale = false): T | null {
+      return apiCache.get<T>(key, allowStale);
+    },
+    set<T>(key: string, data: T, ttlMs: number, tag?: string, persist = false): void {
+      apiCache.set(key, data, ttlMs, tag, persist);
+    },
+    has(key: string): boolean {
+      return apiCache.has(key);
+    },
+    delete(key: string): boolean {
+      return apiCache.delete(key);
+    },
+    invalidate(tag: string): void {
+      apiCache.invalidateTag(tag);
+    },
+    invalidateTags(tags: string[]): void {
+      apiCache.invalidateTags(tags);
+    },
+    invalidateKey(key: string): boolean {
+      return apiCache.invalidateKey(key);
+    },
+    invalidatePrefix(prefix: string): void {
+      apiCache.invalidatePrefix(prefix);
+    },
+    mutate<T>(key: string, updater: T | ((current: T | null) => T), ttlMs?: number, tag?: string): T {
+      return apiCache.mutate(key, updater, ttlMs, tag);
+    },
+    pruneExpired(): number {
+      return apiCache.pruneExpired();
+    },
+    getStats() {
+      return apiCache.getStats();
+    },
+    clearAll(): void {
+      apiCache.clear();
     }
   }
 };

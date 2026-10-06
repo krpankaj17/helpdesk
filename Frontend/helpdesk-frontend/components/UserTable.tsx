@@ -11,7 +11,8 @@ import {
   ChevronLeft, 
   ChevronRight,
   Shield,
-  MoreHorizontal
+  MoreHorizontal,
+  RefreshCw
 } from 'lucide-react';
 
 interface UserTableProps {
@@ -20,6 +21,7 @@ interface UserTableProps {
   onAddUser?: () => void;
   onToggleStatus?: (user: User) => void;
   onEditUser?: (user: User) => void;
+  onRefresh?: () => void;
 }
 
 export default function UserTable({
@@ -28,6 +30,7 @@ export default function UserTable({
   onAddUser,
   onToggleStatus,
   onEditUser,
+  onRefresh,
 }: UserTableProps) {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
@@ -103,6 +106,16 @@ export default function UserTable({
             <Plus className="w-3.5 h-3.5" />
             <span>Onboard User</span>
           </button>
+
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-2xs transition-all cursor-pointer"
+              title="Refresh users"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

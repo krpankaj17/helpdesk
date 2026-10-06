@@ -72,7 +72,7 @@ function TicketsContent() {
     }
   }, [agentParam, unassignedParam]);
 
-  const loadData = async (targetPage = currentPage, targetSize = pageSize) => {
+  const loadData = async (targetPage = currentPage, targetSize = pageSize, forceRefresh = false) => {
     setIsLoading(true);
     try {
       const [tPage, cList, uList] = await Promise.all([
@@ -82,9 +82,9 @@ function TicketsContent() {
           categoryId: selectedCategoryId !== 'ALL' ? selectedCategoryId : undefined,
           agentEmail: selectedAgentEmail !== 'ALL' && selectedAgentEmail !== 'UNASSIGNED' ? selectedAgentEmail : undefined,
           unassigned: selectedAgentEmail === 'UNASSIGNED' ? true : undefined,
-        }).catch(() => null),
-        api.categories.getAll().catch(() => []),
-        api.users.getAll().catch(() => []),
+        }, { forceRefresh }).catch(() => null),
+        api.categories.getAll({ forceRefresh }).catch(() => []),
+        api.users.getAll(0, 50, { forceRefresh }).catch(() => []),
       ]);
       if (tPage) {
         setTickets(tPage.content || []);
@@ -235,7 +235,7 @@ function TicketsContent() {
             </button>
 
             <button
-              onClick={() => loadData(currentPage, pageSize)}
+              onClick={() => loadData(currentPage, pageSize, true)}
               disabled={isLoading}
               className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-2xs cursor-pointer"
               title="Refresh tickets from backend"
