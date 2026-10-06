@@ -247,7 +247,6 @@ function DashboardContent() {
             tickets={tickets}
             categories={categories}
             supportAgents={supportAgents}
-            onSelectTicket={setSelectedTicket}
             title={pageTitle}
             subtitle=""
             showAllLink={true}

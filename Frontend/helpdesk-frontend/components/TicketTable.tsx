@@ -167,9 +167,6 @@ export default function TicketTable({
     if (target.closest('button') || target.closest('a') || target.closest('select') || target.closest('input')) {
       return;
     }
-    if (onSelectTicket) {
-      onSelectTicket(ticket);
-    }
     router.push(`/tickets/${ticket.ticketPublicId}`);
   };
 

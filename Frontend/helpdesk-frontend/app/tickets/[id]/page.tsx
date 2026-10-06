@@ -79,7 +79,7 @@ function TicketDetailContent() {
   const [isSending, setIsSending] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatMessagesContainerRef = useRef<HTMLDivElement>(null);
 
   const canInternalNotes = hasPermission('INTERNAL_NOTE_READ') || role === 'ADMIN' || role === 'SUPPORT_MANAGER' || role === 'SUPPORT_AGENT';
   const canUpdateStatus = hasPermission('TICKET_UPDATE') || role === 'ADMIN' || role === 'SUPPORT_MANAGER' || role === 'SUPPORT_AGENT';
@@ -126,12 +126,8 @@ function TicketDetailContent() {
 
   useEffect(() => {
     loadTicket(false);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
   }, [ticketId]);
-
-  // Scroll to bottom of chat when comments or notes change
-  useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [comments, notes, activeTab]);
 
   // Track draft changes
   const hasStatusChanged = ticket ? draftStatus !== ticket.status : false;
@@ -232,6 +228,11 @@ function TicketDetailContent() {
       const updatedActs = await api.tickets.getActivities(ticket.ticketPublicId, { forceRefresh: true }).catch(() => []);
       setActivities(updatedActs);
       toast.success(activeTab === 'notes' ? 'Internal note added' : 'Message sent');
+      setTimeout(() => {
+        if (chatMessagesContainerRef.current) {
+          chatMessagesContainerRef.current.scrollTop = chatMessagesContainerRef.current.scrollHeight;
+        }
+      }, 50);
     } catch (err: any) {
       toast.error(err.message || 'Failed to send message');
     } finally {
@@ -496,7 +497,7 @@ function TicketDetailContent() {
               </div>
 
               {/* Chat Messages Feed Container */}
-              <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-slate-50/50">
+              <div ref={chatMessagesContainerRef} className="flex-1 p-6 overflow-y-auto space-y-4 bg-slate-50/50">
                 {/* 1. Comments Stream */}
                 {activeTab === 'comments' && (
                   <>
@@ -660,8 +661,6 @@ function TicketDetailContent() {
                     )}
                   </div>
                 )}
-
-                <div ref={chatBottomRef} />
               </div>
 
               {/* Chat Input Bar (Only visible on Comments and Notes tabs) */}

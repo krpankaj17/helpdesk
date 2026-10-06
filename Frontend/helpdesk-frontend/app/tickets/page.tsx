@@ -253,7 +253,6 @@ function TicketsContent() {
           supportAgents={supportAgents}
           selectedAgentEmail={selectedAgentEmail}
           onAgentChange={handleAgentChange}
-          onSelectTicket={(ticket) => setSelectedTicket(ticket)}
           title={role === 'REQUESTER' ? "My Active Requests" : isAgent ? "My Assigned Tickets" : "All Operational Tickets"}
           subtitle={isAgent ? "Filter your assigned tickets by status, category, or search keywords" : "Filter tickets by status, category, support agent, or search keywords"}
           showAllLink={false}
