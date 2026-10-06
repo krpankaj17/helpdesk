@@ -50,6 +50,13 @@ public class UserService {
     }
 
     public Page<CreateUserResponse> getAllUsers(Pageable pageable) {
+        return getAllUsers(null, pageable);
+    }
+
+    public Page<CreateUserResponse> getAllUsers(String search, Pageable pageable) {
+        if (search != null && !search.isBlank()) {
+            return userRepository.searchUsers(search.trim(), pageable).map(this::mapToResponse);
+        }
         return userRepository.findAll(pageable).map(this::mapToResponse);
     }
 
@@ -139,7 +146,8 @@ public class UserService {
                 user.getName(),
                 user.getEmail(),
                 user.getIsActive(),
-                roleName
+                roleName,
+                user.getCreatedAt()
         );
     }
 }

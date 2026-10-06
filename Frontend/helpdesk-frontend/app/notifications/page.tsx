@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import { useConfirmModal } from '@/components/ConfirmModal';
+import TablePagination from '@/components/TablePagination';
 
 export default function NotificationsPage() {
   return (
@@ -388,68 +389,22 @@ function NotificationsContent() {
         </div>
 
         {/* Pagination Strip */}
-        {filteredNotifications.length > 0 && (
-          <div className="pill-card px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-            <div>
-              Showing <span className="font-bold text-slate-800">
-                {filteredNotifications.length === 0 ? 0 : startIndex + 1} - {endIndex}
-              </span> of <span className="font-bold text-slate-800">{filteredNotifications.length}</span> alerts
-            </div>
-
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span>Rows per page:</span>
-                <div className="relative">
-                  <select
-                    value={pageSize}
-                    onChange={(e) => setPageSize(Number(e.target.value))}
-                    className="appearance-none bg-white border border-slate-200 rounded-lg px-2.5 py-1 pr-6 font-semibold text-slate-700 focus:outline-none cursor-pointer"
-                  >
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                    <option value={50}>50</option>
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1.5">
-                <button 
-                  disabled={currentPage === 0 || isLoading}
-                  onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
-                  className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed font-medium"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                  <span>Prev</span>
-                </button>
-                
-                {Array.from({ length: totalPages }, (_, i) => (
-                  <button
-                    key={i}
-                    disabled={isLoading}
-                    onClick={() => setCurrentPage(i)}
-                    className={`w-7 h-7 rounded-md font-bold flex items-center justify-center text-xs transition-colors cursor-pointer ${
-                      currentPage === i
-                        ? 'bg-[#0B132B] text-white shadow-2xs'
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    {i + 1}
-                  </button>
-                )).slice(Math.max(0, currentPage - 2), Math.min(totalPages, currentPage + 3))}
-
-                <button 
-                  disabled={currentPage >= totalPages - 1 || isLoading}
-                  onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
-                  className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed font-medium"
-                >
-                  <span>Next</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <div className="pill-card overflow-hidden">
+          <TablePagination
+            total={filteredNotifications.length}
+            page={currentPage}
+            size={pageSize}
+            totalPages={totalPages}
+            pageSizeOptions={[10, 20, 50]}
+            label="alerts"
+            isLoading={isLoading}
+            onPageChange={(newPage) => setCurrentPage(newPage)}
+            onPageSizeChange={(newSize) => {
+              setPageSize(newSize);
+              setCurrentPage(0);
+            }}
+          />
+        </div>
       </main>
 
       {/* Confirmation Modal */}

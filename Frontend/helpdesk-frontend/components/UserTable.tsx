@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { User, UserRole } from '@/types';
 import { useToast } from '@/context/ToastContext';
+import TablePagination from '@/components/TablePagination';
 import { 
   Plus, 
   Search, 
@@ -12,7 +13,9 @@ import {
   ChevronRight,
   Shield,
   MoreHorizontal,
-  RefreshCw
+  RefreshCw,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 
 interface UserTableProps {
@@ -29,6 +32,10 @@ interface UserTableProps {
   onPageChange?: (newPage: number) => void;
   onPageSizeChange?: (newSize: number) => void;
   isLoading?: boolean;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  sortOrder?: 'desc' | 'asc';
+  onSortChange?: (order: 'desc' | 'asc') => void;
 }
 
 export default function UserTable({
@@ -45,12 +52,37 @@ export default function UserTable({
   onPageChange,
   onPageSizeChange,
   isLoading = false,
+  searchQuery: externalSearchQuery,
+  onSearchChange,
+  sortOrder: externalSortOrder,
+  onSortChange,
 }: UserTableProps) {
   const { toast } = useToast();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [internalSearchQuery, setInternalSearchQuery] = useState('');
+  const [internalSortOrder, setInternalSortOrder] = useState<'desc' | 'asc'>('desc');
   const [roleFilter, setRoleFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
-  const [activeStatTab, setActiveStatTab] = useState<'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE'>('ACTIVE');
+  const [activeStatTab, setActiveStatTab] = useState<'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE'>('ALL');
+
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery;
+  const sortOrder = externalSortOrder !== undefined ? externalSortOrder : internalSortOrder;
+
+  const handleSearchChange = (value: string) => {
+    if (onSearchChange) {
+      onSearchChange(value);
+    } else {
+      setInternalSearchQuery(value);
+    }
+  };
+
+  const handleToggleSort = () => {
+    const nextOrder = sortOrder === 'desc' ? 'asc' : 'desc';
+    if (onSortChange) {
+      onSortChange(nextOrder);
+    } else {
+      setInternalSortOrder(nextOrder);
+    }
+  };
   
   // Internal pagination fallback if not controlled by parent
   const [internalPage, setInternalPage] = useState(0);
@@ -76,8 +108,10 @@ export default function UserTable({
     }
   };
 
+  const isServerSide = totalElements !== undefined;
+
   // Quick summary counts
-  const totalUsers = users.length;
+  const totalUsers = isServerSide ? (totalElements ?? users.length) : users.length;
   const activeCount = users.filter(u => u.isActive).length;
   const inactiveCount = users.filter(u => !u.isActive).length;
   const supportStaffCount = users.filter(u => u.roleName === 'SUPPORT_AGENT' || u.roleName === 'SUPPORT_MANAGER').length;
@@ -88,13 +122,12 @@ export default function UserTable({
     if (activeStatTab === 'INACTIVE' && u.isActive) return false;
     if (activeStatTab === 'SUPPORT' && (u.roleName !== 'SUPPORT_AGENT' && u.roleName !== 'SUPPORT_MANAGER')) return false;
 
-    // Search query
-    if (searchQuery.trim()) {
+    // Search query: client-side filter fallback when not handled by server
+    if (searchQuery.trim() && !onSearchChange) {
       const q = searchQuery.toLowerCase();
-      const matchName = u.name.toLowerCase().includes(q);
-      const matchEmail = u.email.toLowerCase().includes(q);
-      const matchDept = u.department?.toLowerCase().includes(q);
-      if (!matchName && !matchEmail && !matchDept) return false;
+      const matchName = (u.name || '').toLowerCase().includes(q);
+      const matchEmail = (u.email || '').toLowerCase().includes(q);
+      if (!matchName && !matchEmail) return false;
     }
 
     // Dropdown filters
@@ -105,7 +138,6 @@ export default function UserTable({
     return true;
   });
 
-  const isServerSide = totalElements !== undefined;
   const total = isServerSide ? totalElements : filtered.length;
   const pages = totalPages !== undefined ? totalPages : Math.max(1, Math.ceil(total / size));
   const displayedUsers = isServerSide ? filtered : filtered.slice(page * size, (page + 1) * size);
@@ -127,14 +159,14 @@ export default function UserTable({
 
   return (
     <div className="space-y-6">
-      {/* Top Header Row matching screenshot 2 style */}
+      {/* Top Header Row */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold text-[#0B132B] tracking-tight">
             HelpDesk Users & Staff
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Showing {filtered.length} of {totalUsers} enterprise users and support staff across 4 RBAC roles
+            Showing {displayedUsers.length} of {totalUsers} enterprise users and support staff across 4 RBAC roles
           </p>
         </div>
 
@@ -161,7 +193,7 @@ export default function UserTable({
         </div>
       </div>
 
-      {/* Summary Ribbon Strip with Light Yellow Highlighted Pill matching screenshot 2 */}
+      {/* Summary Ribbon Strip with Light Yellow Highlighted Pill */}
       <div className="pill-card px-4 py-3 flex items-center gap-2 sm:gap-6 overflow-x-auto">
         <button
           onClick={() => setActiveStatTab('ALL')}
@@ -219,9 +251,9 @@ export default function UserTable({
           <Search className="w-3.5 h-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search by name, email, or department..."
+            placeholder="Search by name or email..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="w-full pl-9 pr-4 py-2 rounded-full text-xs bg-white border border-slate-200 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all shadow-2xs"
           />
         </div>
@@ -268,9 +300,22 @@ export default function UserTable({
               <tr className="bg-slate-50/50 border-b border-slate-100 text-slate-400 font-medium">
                 <th className="py-3 px-5 font-semibold">User</th>
                 <th className="py-3 px-4 font-semibold">Email</th>
-                <th className="py-3 px-4 font-semibold">Department</th>
                 <th className="py-3 px-4 font-semibold">Assigned Tickets</th>
-                <th className="py-3 px-4 font-semibold">Registered</th>
+                <th className="py-3 px-4 font-semibold">
+                  <button
+                    type="button"
+                    onClick={handleToggleSort}
+                    className="inline-flex items-center gap-1.5 text-slate-600 hover:text-slate-900 font-semibold transition-colors cursor-pointer group"
+                    title={`Sort by registered date (${sortOrder === 'asc' ? 'Oldest first' : 'Newest first'})`}
+                  >
+                    <span>Registered</span>
+                    {sortOrder === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    )}
+                  </button>
+                </th>
                 <th className="py-3 px-4 font-semibold">Role</th>
                 <th className="py-3 px-4 font-semibold">Status</th>
                 <th className="py-3 px-5 font-semibold text-right">Actions</th>
@@ -279,7 +324,7 @@ export default function UserTable({
             <tbody className="divide-y divide-slate-100">
               {displayedUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-14 text-center text-slate-400 text-xs">
+                  <td colSpan={7} className="py-14 text-center text-slate-400 text-xs">
                     No user records match your selected filters.
                   </td>
                 </tr>
@@ -309,11 +354,6 @@ export default function UserTable({
                         {u.email}
                       </td>
 
-                      {/* Department */}
-                      <td className="py-3.5 px-4 text-slate-600">
-                        {u.department || 'General IT'}
-                      </td>
-
                       {/* Assigned Tickets Workload */}
                       <td className="py-3.5 px-4 text-xs font-medium">
                         {wl && wl.total > 0 ? (
@@ -337,9 +377,17 @@ export default function UserTable({
                         )}
                       </td>
 
-                      {/* Start Date */}
-                      <td className="py-3.5 px-4 text-slate-500">
-                        {u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Jan 15, 2024'}
+                      {/* Registered Date */}
+                      <td className="py-3.5 px-4 text-slate-500 font-medium">
+                        {u.createdAt ? (
+                          new Date(u.createdAt).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric'
+                          })
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
                       </td>
 
                       {/* Role Badge */}
@@ -391,69 +439,17 @@ export default function UserTable({
         </div>
 
         {/* Bottom Pagination Strip */}
-        {total > 0 && (
-          <div className="px-6 py-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-            <div>
-              Showing <span className="font-bold text-slate-800">
-                {total === 0 ? 0 : (page * size) + 1} - {Math.min((page + 1) * size, total)}
-              </span> of <span className="font-bold text-slate-800">{total}</span> users
-            </div>
-
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span>Rows per page:</span>
-                <div className="relative">
-                  <select
-                    value={size}
-                    onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                    className="appearance-none bg-white border border-slate-200 rounded-lg px-2.5 py-1 pr-6 font-semibold text-slate-700 focus:outline-none cursor-pointer"
-                  >
-                    <option value={10}>10</option>
-                    <option value={25}>25</option>
-                    <option value={50}>50</option>
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              </div>
-
-              {/* Pagination Buttons */}
-              <div className="flex items-center gap-1.5">
-                <button 
-                  disabled={page === 0 || isLoading}
-                  onClick={() => handlePageChange(page - 1)}
-                  className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed font-medium"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                  <span>Prev</span>
-                </button>
-                
-                {Array.from({ length: pages }, (_, i) => (
-                  <button
-                    key={i}
-                    disabled={isLoading}
-                    onClick={() => handlePageChange(i)}
-                    className={`w-7 h-7 rounded-md font-bold flex items-center justify-center text-xs transition-colors cursor-pointer ${
-                      page === i
-                        ? 'bg-[#0B132B] text-white shadow-2xs'
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    {i + 1}
-                  </button>
-                )).slice(Math.max(0, page - 2), Math.min(pages, page + 3))}
-
-                <button 
-                  disabled={page >= pages - 1 || isLoading}
-                  onClick={() => handlePageChange(page + 1)}
-                  className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed font-medium"
-                >
-                  <span>Next</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <TablePagination
+          total={total}
+          page={page}
+          size={size}
+          totalPages={pages}
+          pageSizeOptions={[10, 25, 50]}
+          label="users"
+          isLoading={isLoading}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+        />
       </div>
     </div>
   );

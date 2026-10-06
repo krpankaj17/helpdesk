@@ -24,5 +24,10 @@ public interface UserRepository extends JpaRepository<User,Long> {
   @Query("SELECT u FROM User u WHERE u.role.name IN :roleNames")
   List<User> findByRoleNames(@Param("roleNames") List<String> roleNames);
 
+  @Query("SELECT u FROM User u WHERE " +
+         "LOWER(u.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+         "LOWER(u.email) LIKE LOWER(CONCAT('%', :search, '%'))")
+  org.springframework.data.domain.Page<User> searchUsers(@Param("search") String search, org.springframework.data.domain.Pageable pageable);
+
   boolean existsByRole_RoleId(Long roleId);
 }

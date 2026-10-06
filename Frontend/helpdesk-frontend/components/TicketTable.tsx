@@ -2,8 +2,10 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Ticket, TicketStatus, TicketCategory, User } from '@/types';
 import { useAuth } from '@/context/AuthContext';
+import TablePagination from '@/components/TablePagination';
 import { 
   Search, 
   Tag, 
@@ -59,6 +61,7 @@ export default function TicketTable({
   onPageSizeChange,
   isLoading = false,
 }: TicketTableProps) {
+  const router = useRouter();
   const { role } = useAuth();
   const isAgent = role === 'SUPPORT_AGENT' || (role as string) === 'AGENT';
   const canFilterByAgent = role === 'ADMIN' || role === 'SUPPORT_MANAGER';
@@ -119,6 +122,15 @@ export default function TicketTable({
     }
   };
 
+  const handleCategoryBadgeClick = (e: React.MouseEvent, catId: number) => {
+    e.stopPropagation();
+    if (activeCategory === catId) {
+      handleCategorySelect('ALL');
+    } else {
+      handleCategorySelect(catId);
+    }
+  };
+
   const handleAgentSelect = (agent: string | 'ALL' | 'UNASSIGNED') => {
     if (onAgentChange) {
       onAgentChange(agent);
@@ -127,6 +139,38 @@ export default function TicketTable({
     }
     setIsAgentDropdownOpen(false);
     setAgentSearchQuery('');
+  };
+
+  const handleAgentBadgeClick = (e: React.MouseEvent, agentEmail: string) => {
+    e.stopPropagation();
+    if (!canFilterByAgent) return;
+    if (activeAgent.toLowerCase() === agentEmail.toLowerCase()) {
+      handleAgentSelect('ALL');
+    } else {
+      handleAgentSelect(agentEmail);
+    }
+  };
+
+  const handleUnassignedBadgeClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canFilterByAgent) return;
+    if (activeAgent === 'UNASSIGNED') {
+      handleAgentSelect('ALL');
+    } else {
+      handleAgentSelect('UNASSIGNED');
+    }
+  };
+
+  const handleRowClick = (e: React.MouseEvent, ticket: Ticket) => {
+    const target = e.target as HTMLElement;
+    // Don't trigger row navigation if user clicked an interactive control
+    if (target.closest('button') || target.closest('a') || target.closest('select') || target.closest('input')) {
+      return;
+    }
+    if (onSelectTicket) {
+      onSelectTicket(ticket);
+    }
+    router.push(`/tickets/${ticket.ticketPublicId}`);
   };
 
   // Build deduplicated list of support agents with their ticket counts
@@ -582,13 +626,15 @@ export default function TicketTable({
                 return (
                   <tr
                     key={ticket.ticketPublicId}
-                    className="hover:bg-slate-50/70 transition-colors group"
+                    onClick={(e) => handleRowClick(e, ticket)}
+                    className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
                   >
                     {/* Title & Code */}
                     <td className="py-3.5 pr-4 max-w-[280px]">
                       <Link
                         href={`/tickets/${ticket.ticketPublicId}`}
-                        className="font-bold text-slate-900 text-xs truncate group-hover:text-slate-950 transition-colors block hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-bold text-slate-900 text-xs truncate group-hover:text-indigo-600 transition-colors block hover:underline"
                       >
                         {ticket.title}
                       </Link>
@@ -612,16 +658,24 @@ export default function TicketTable({
                     {/* Category */}
                     <td className="py-3.5 pr-4 text-slate-600">
                       <button
-                        onClick={() => handleCategorySelect(ticket.categoryId)}
+                        type="button"
+                        onClick={(e) => handleCategoryBadgeClick(e, ticket.categoryId)}
                         className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors max-w-[150px] truncate cursor-pointer ${
                           activeCategory === ticket.categoryId
-                            ? 'bg-[#0B132B] text-white'
+                            ? 'bg-[#0B132B] text-white shadow-2xs'
                             : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                         }`}
-                        title={`Filter by category: ${ticket.categoryName}`}
+                        title={
+                          activeCategory === ticket.categoryId
+                            ? `Active filter: ${ticket.categoryName} (Click to remove filter)`
+                            : `Filter by category: ${ticket.categoryName}`
+                        }
                       >
-                        <Tag className="w-3 h-3 shrink-0 text-slate-400" />
+                        <Tag className={`w-3 h-3 shrink-0 ${activeCategory === ticket.categoryId ? 'text-white' : 'text-slate-400'}`} />
                         <span className="truncate">{ticket.categoryName}</span>
+                        {activeCategory === ticket.categoryId && (
+                          <X className="w-2.5 h-2.5 text-white/80 shrink-0 ml-0.5" />
+                        )}
                       </button>
                     </td>
 
@@ -630,7 +684,8 @@ export default function TicketTable({
                       <td className="py-3.5 pr-4">
                         {ticket.assignedAgentEmail || ticket.assignedAgentName ? (
                           <button
-                            onClick={() => canFilterByAgent && handleAgentSelect(ticket.assignedAgentEmail!)}
+                            type="button"
+                            onClick={(e) => handleAgentBadgeClick(e, ticket.assignedAgentEmail!)}
                             className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-colors max-w-[160px] truncate ${
                               canFilterByAgent ? 'cursor-pointer' : 'cursor-default'
                             } ${
@@ -638,14 +693,22 @@ export default function TicketTable({
                                 ? 'bg-[#0B132B] text-white shadow-2xs'
                                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/60'
                             }`}
-                            title={`Assigned to: ${ticket.assignedAgentName || ticket.assignedAgentEmail}`}
+                            title={
+                              activeAgent.toLowerCase() === (ticket.assignedAgentEmail || '').toLowerCase()
+                                ? `Active filter: ${ticket.assignedAgentName || ticket.assignedAgentEmail} (Click to remove filter)`
+                                : `Assigned to: ${ticket.assignedAgentName || ticket.assignedAgentEmail}`
+                            }
                           >
-                            <UserCheck className="w-3 h-3 text-slate-500 shrink-0" />
+                            <UserCheck className={`w-3 h-3 shrink-0 ${activeAgent.toLowerCase() === (ticket.assignedAgentEmail || '').toLowerCase() ? 'text-white' : 'text-slate-500'}`} />
                             <span className="truncate">{ticket.assignedAgentName || ticket.assignedAgentEmail}</span>
+                            {activeAgent.toLowerCase() === (ticket.assignedAgentEmail || '').toLowerCase() && (
+                              <X className="w-2.5 h-2.5 text-white/80 shrink-0 ml-0.5" />
+                            )}
                           </button>
                         ) : (
                           <button
-                            onClick={() => canFilterByAgent && handleAgentSelect('UNASSIGNED')}
+                            type="button"
+                            onClick={(e) => handleUnassignedBadgeClick(e)}
                             className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-colors ${
                               canFilterByAgent ? 'cursor-pointer' : 'cursor-default'
                             } ${
@@ -653,10 +716,17 @@ export default function TicketTable({
                                 ? 'bg-amber-600 text-white shadow-2xs'
                                 : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200/60'
                             }`}
-                            title="Unassigned ticket"
+                            title={
+                              activeAgent === 'UNASSIGNED'
+                                ? 'Active filter: Unassigned (Click to remove filter)'
+                                : 'Unassigned ticket'
+                            }
                           >
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                             <span>Unassigned</span>
+                            {activeAgent === 'UNASSIGNED' && (
+                              <X className="w-2.5 h-2.5 text-white/80 shrink-0 ml-0.5" />
+                            )}
                           </button>
                         )}
                       </td>
@@ -676,10 +746,11 @@ export default function TicketTable({
                     <td className="py-3.5 text-right pr-2">
                       <Link
                         href={`/tickets/${ticket.ticketPublicId}`}
-                        className="font-semibold text-slate-700 hover:text-slate-950 inline-flex items-center gap-0.5 transition-colors cursor-pointer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#0B132B] hover:bg-slate-800 text-white shadow-2xs hover:shadow-xs transition-all cursor-pointer whitespace-nowrap group-hover:bg-[#1A264F]"
                       >
                         <span>Manage</span>
-                        <span className="text-xs">↗</span>
+                        <span className="text-[10px] font-bold">↗</span>
                       </Link>
                     </td>
                   </tr>
@@ -691,66 +762,17 @@ export default function TicketTable({
       </div>
 
       {/* Pagination Footer */}
-      {total > 0 && (
-        <div className="px-6 py-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-          <div>
-            Showing <span className="font-bold text-slate-800">
-              {total === 0 ? 0 : (page * size) + 1} - {Math.min((page + 1) * size, total)}
-            </span> of <span className="font-bold text-slate-800">{total}</span> tickets
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span>Rows per page:</span>
-              <select
-                value={size}
-                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 font-semibold text-slate-700 focus:outline-none cursor-pointer"
-              >
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-              </select>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <button
-                disabled={page === 0 || isLoading}
-                onClick={() => handlePageChange(page - 1)}
-                className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed font-medium"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>Prev</span>
-              </button>
-
-              {Array.from({ length: pages }, (_, i) => (
-                <button
-                  key={i}
-                  disabled={isLoading}
-                  onClick={() => handlePageChange(i)}
-                  className={`w-7 h-7 rounded-md font-bold flex items-center justify-center text-xs transition-colors cursor-pointer ${
-                    page === i
-                      ? 'bg-[#0B132B] text-white'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  {i + 1}
-                </button>
-              )).slice(Math.max(0, page - 2), Math.min(pages, page + 3))}
-
-              <button
-                disabled={page >= pages - 1 || isLoading}
-                onClick={() => handlePageChange(page + 1)}
-                className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed font-medium"
-              >
-                <span>Next</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <TablePagination
+        total={total}
+        page={page}
+        size={size}
+        totalPages={pages}
+        pageSizeOptions={[10, 20, 50]}
+        label="tickets"
+        isLoading={isLoading}
+        onPageChange={handlePageChange}
+        onPageSizeChange={handlePageSizeChange}
+      />
     </div>
   );
 }

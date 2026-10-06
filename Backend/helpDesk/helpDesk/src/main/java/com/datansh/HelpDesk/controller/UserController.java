@@ -37,10 +37,11 @@ public class UserController {
 
     @GetMapping
     public ResponseEntity<Page<CreateUserResponse>> getAllUser(
+            @RequestParam(required = false) String search,
             @org.springdoc.core.annotations.ParameterObject
             @PageableDefault (size = 10,sort = "createdAt",direction = Sort.Direction.DESC)
             Pageable pageable){
-        return ResponseEntity.ok().body(userService.getAllUsers(pageable));
+        return ResponseEntity.ok().body(userService.getAllUsers(search, pageable));
     }
     @DeleteMapping("/{publicId}")
     public ResponseEntity<?>  deleteUser(@PathVariable UUID publicId){

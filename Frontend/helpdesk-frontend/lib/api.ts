@@ -567,11 +567,32 @@ export const api = {
   },
 
   users: {
-    async getPaginated(page = 0, size = 10, options?: CacheOptions | { forceRefresh?: boolean }): Promise<PaginatedResponse<User>> {
+    async getPaginated(
+      page = 0, 
+      size = 10, 
+      searchOrOptions?: string | CacheOptions | { forceRefresh?: boolean }, 
+      sort = 'createdAt,desc', 
+      options?: CacheOptions | { forceRefresh?: boolean }
+    ): Promise<PaginatedResponse<User>> {
+      let search: string | undefined;
+      let actualOptions = options;
+      if (typeof searchOrOptions === 'object' && searchOrOptions !== null) {
+        actualOptions = searchOrOptions;
+        search = undefined;
+      } else {
+        search = searchOrOptions;
+      }
+
+      const query = new URLSearchParams();
+      query.append('page', page.toString());
+      query.append('size', size.toString());
+      if (search && search.trim()) query.append('search', search.trim());
+      if (sort) query.append('sort', sort);
+
       return apiCache.fetchWithCache(
-        `users:paginated:${page}:${size}`,
+        `users:paginated:${query.toString()}`,
         async () => {
-          const data = await request<PaginatedResponse<User>>(`/users?page=${page}&size=${size}`);
+          const data = await request<PaginatedResponse<User>>(`/users?${query.toString()}`);
           return {
             content: data?.content || [],
             totalElements: data?.totalElements ?? (data?.content?.length || 0),
@@ -586,13 +607,27 @@ export const api = {
         {
           ttl: CACHE_TTL.USERS,
           tag: 'users',
-          ...(typeof options === 'object' ? options : {}),
+          ...(typeof actualOptions === 'object' ? actualOptions : {}),
         }
       );
     },
 
-    async getAll(page = 0, size = 10, options?: CacheOptions | { forceRefresh?: boolean }): Promise<User[]> {
-      const pageData = await this.getPaginated(page, size, options);
+    async getAll(
+      page = 0, 
+      size = 10, 
+      searchOrOptions?: string | CacheOptions | { forceRefresh?: boolean }, 
+      sort = 'createdAt,desc', 
+      options?: CacheOptions | { forceRefresh?: boolean }
+    ): Promise<User[]> {
+      let search: string | undefined;
+      let actualOptions = options;
+      if (typeof searchOrOptions === 'object' && searchOrOptions !== null) {
+        actualOptions = searchOrOptions;
+        search = undefined;
+      } else {
+        search = searchOrOptions;
+      }
+      const pageData = await this.getPaginated(page, size, search, sort, actualOptions);
       return pageData.content;
     },
 

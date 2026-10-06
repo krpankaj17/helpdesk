@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Navbar from '@/components/Navbar';
 import AuthGuard from '@/components/AuthGuard';
 import UserTable from '@/components/UserTable';
@@ -33,11 +33,22 @@ function UsersContent() {
   const [totalElements, setTotalElements] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
 
-  const loadData = async (targetPage = currentPage, targetSize = pageSize, forceRefresh = false) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
+  const isFirstMount = useRef(true);
+
+  const loadData = async (
+    targetPage = currentPage,
+    targetSize = pageSize,
+    targetSearch = searchQuery,
+    targetSort = sortOrder,
+    forceRefresh = false
+  ) => {
     setIsLoading(true);
     try {
+      const sortParam = `createdAt,${targetSort}`;
       const [uPage, tList] = await Promise.all([
-        api.users.getPaginated(targetPage, targetSize, { forceRefresh }).catch(() => null),
+        api.users.getPaginated(targetPage, targetSize, targetSearch, sortParam, { forceRefresh }).catch(() => null),
         api.tickets.getAll(undefined, { forceRefresh }).catch(() => []),
       ]);
       if (uPage) {
@@ -69,26 +80,47 @@ function UsersContent() {
     }
   };
 
+  // Debounced search query change effect
   useEffect(() => {
-    loadData(0, 10, false);
-  }, []);
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      loadData(0, pageSize, searchQuery, sortOrder, false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      loadData(0, pageSize, searchQuery, sortOrder, false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage);
-    loadData(newPage, pageSize);
+    loadData(newPage, pageSize, searchQuery, sortOrder);
   };
 
   const handlePageSizeChange = (newSize: number) => {
     setPageSize(newSize);
     setCurrentPage(0);
-    loadData(0, newSize);
+    loadData(0, newSize, searchQuery, sortOrder);
+  };
+
+  const handleSearchChange = (query: string) => {
+    setSearchQuery(query);
+    setCurrentPage(0);
+  };
+
+  const handleSortChange = (newSort: 'desc' | 'asc') => {
+    setSortOrder(newSort);
+    setCurrentPage(0);
+    loadData(0, pageSize, searchQuery, newSort, false);
   };
 
   const handleCreateUser = async (userReq: CreateUserRequest) => {
     try {
       await api.users.create(userReq);
       toast.success('User onboarded successfully');
-      await loadData();
+      await loadData(currentPage, pageSize, searchQuery, sortOrder, true);
       setIsAddUserOpen(false);
     } catch (err: any) {
       toast.error(err.message || 'Failed to create user');
@@ -99,7 +131,7 @@ function UsersContent() {
     try {
       await api.users.updateStatus(user.userPublicId, !user.isActive);
       toast.success(`User status updated to ${!user.isActive ? 'Active' : 'Inactive'}`);
-      await loadData();
+      await loadData(currentPage, pageSize, searchQuery, sortOrder, true);
     } catch (err: any) {
       toast.error(err.message || 'Failed to update user status');
     }
@@ -113,7 +145,7 @@ function UsersContent() {
         <UserTable
           users={users}
           ticketCountsByAgent={ticketCounts}
-          onRefresh={() => loadData(currentPage, pageSize, true)}
+          onRefresh={() => loadData(currentPage, pageSize, searchQuery, sortOrder, true)}
           currentPage={currentPage}
           totalPages={totalPages}
           totalElements={totalElements}
@@ -121,6 +153,10 @@ function UsersContent() {
           onPageChange={handlePageChange}
           onPageSizeChange={handlePageSizeChange}
           isLoading={isLoading}
+          searchQuery={searchQuery}
+          onSearchChange={handleSearchChange}
+          sortOrder={sortOrder}
+          onSortChange={handleSortChange}
           onAddUser={() => {
             if (!canManageUsers) {
               toast.warning('Only ADMIN has USER_MANAGE authority to onboard staff.');
@@ -155,7 +191,7 @@ function UsersContent() {
         isOpen={!!editingUser}
         user={editingUser}
         onClose={() => setEditingUser(null)}
-        onSuccess={() => loadData(currentPage, pageSize, true)}
+        onSuccess={() => loadData(currentPage, pageSize, searchQuery, sortOrder, true)}
       />
     </div>
   );
