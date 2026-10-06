@@ -1,9 +1,33 @@
-@"
+# IDE & Editors
 .idea/
 *.iml
+*.iws
+*.ipr
+out/
+.vscode/
+
+# Build artifacts
 target/
+build/
+.next/
+/node_modules
+
+# Environment & local configurations
 .env
 *.env
+.env.local
+.env.*.local
 application-local.properties
 application-local.yml
-"@ | Out-File -Encoding utf8 .gitignore
+
+# Logs & Temporary Uploads
+logs/
+*.log
+uploads/
+*.pem
+
+# Scratch SQL scripts in root
+/seed-roles-users.sql
+/seed-users.sql
+/test-query.sql
+/update-pankaj-password.sql
