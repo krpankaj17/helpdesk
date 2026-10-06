@@ -27,13 +27,25 @@ function UsersContent() {
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
 
-  const loadData = async (forceRefresh = false) => {
+  const [currentPage, setCurrentPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalElements, setTotalElements] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const loadData = async (targetPage = currentPage, targetSize = pageSize, forceRefresh = false) => {
+    setIsLoading(true);
     try {
-      const [uList, tList] = await Promise.all([
-        api.users.getAll(0, 50, { forceRefresh }).catch(() => []),
+      const [uPage, tList] = await Promise.all([
+        api.users.getPaginated(targetPage, targetSize, { forceRefresh }).catch(() => null),
         api.tickets.getAll(undefined, { forceRefresh }).catch(() => []),
       ]);
-      setUsers(uList || []);
+      if (uPage) {
+        setUsers(uPage.content || []);
+        setTotalPages(uPage.totalPages);
+        setTotalElements(uPage.totalElements);
+        setCurrentPage(uPage.number);
+      }
 
       const counts: Record<string, { total: number; active: number }> = {};
       (tList || []).forEach((t) => {
@@ -52,12 +64,25 @@ function UsersContent() {
     } catch {
       setUsers([]);
       setTicketCounts({});
+    } finally {
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData(false);
+    loadData(0, 10, false);
   }, []);
+
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    loadData(newPage, pageSize);
+  };
+
+  const handlePageSizeChange = (newSize: number) => {
+    setPageSize(newSize);
+    setCurrentPage(0);
+    loadData(0, newSize);
+  };
 
   const handleCreateUser = async (userReq: CreateUserRequest) => {
     try {
@@ -88,7 +113,14 @@ function UsersContent() {
         <UserTable
           users={users}
           ticketCountsByAgent={ticketCounts}
-          onRefresh={() => loadData(true)}
+          onRefresh={() => loadData(currentPage, pageSize, true)}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalElements={totalElements}
+          pageSize={pageSize}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={isLoading}
           onAddUser={() => {
             if (!canManageUsers) {
               toast.warning('Only ADMIN has USER_MANAGE authority to onboard staff.');
@@ -123,7 +155,7 @@ function UsersContent() {
         isOpen={!!editingUser}
         user={editingUser}
         onClose={() => setEditingUser(null)}
-        onSuccess={() => loadData(true)}
+        onSuccess={() => loadData(currentPage, pageSize, true)}
       />
     </div>
   );

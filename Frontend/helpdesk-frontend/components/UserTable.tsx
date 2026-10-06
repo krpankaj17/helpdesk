@@ -22,6 +22,13 @@ interface UserTableProps {
   onToggleStatus?: (user: User) => void;
   onEditUser?: (user: User) => void;
   onRefresh?: () => void;
+  currentPage?: number;
+  totalPages?: number;
+  totalElements?: number;
+  pageSize?: number;
+  onPageChange?: (newPage: number) => void;
+  onPageSizeChange?: (newSize: number) => void;
+  isLoading?: boolean;
 }
 
 export default function UserTable({
@@ -31,13 +38,43 @@ export default function UserTable({
   onToggleStatus,
   onEditUser,
   onRefresh,
+  currentPage,
+  totalPages,
+  totalElements,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+  isLoading = false,
 }: UserTableProps) {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [activeStatTab, setActiveStatTab] = useState<'ALL' | 'ACTIVE' | 'SUPPORT' | 'INACTIVE'>('ACTIVE');
-  const [currentPage, setCurrentPage] = useState(1);
+  
+  // Internal pagination fallback if not controlled by parent
+  const [internalPage, setInternalPage] = useState(0);
+  const [internalSize, setInternalSize] = useState(10);
+
+  const page = currentPage !== undefined ? currentPage : internalPage;
+  const size = pageSize !== undefined ? pageSize : internalSize;
+
+  const handlePageChange = (newPage: number) => {
+    if (onPageChange) {
+      onPageChange(newPage);
+    } else {
+      setInternalPage(newPage);
+    }
+  };
+
+  const handlePageSizeChange = (newSize: number) => {
+    if (onPageSizeChange) {
+      onPageSizeChange(newSize);
+    } else {
+      setInternalSize(newSize);
+      setInternalPage(0);
+    }
+  };
 
   // Quick summary counts
   const totalUsers = users.length;
@@ -67,6 +104,11 @@ export default function UserTable({
 
     return true;
   });
+
+  const isServerSide = totalElements !== undefined;
+  const total = isServerSide ? totalElements : filtered.length;
+  const pages = totalPages !== undefined ? totalPages : Math.max(1, Math.ceil(total / size));
+  const displayedUsers = isServerSide ? filtered : filtered.slice(page * size, (page + 1) * size);
 
   const getRoleBadge = (roleName: UserRole) => {
     switch (roleName) {
@@ -235,14 +277,14 @@ export default function UserTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.length === 0 ? (
+              {displayedUsers.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-14 text-center text-slate-400 text-xs">
                     No user records match your selected filters.
                   </td>
                 </tr>
               ) : (
-                filtered.map((u) => {
+                displayedUsers.map((u) => {
                   const wl = ticketCountsByAgent[u.email.toLowerCase()];
                   const isStaff = u.roleName === 'SUPPORT_AGENT' || u.roleName === 'SUPPORT_MANAGER' || (u.roleName as string) === 'AGENT';
                   return (
@@ -348,52 +390,70 @@ export default function UserTable({
           </table>
         </div>
 
-        {/* Bottom Pagination Strip matching screenshot 2 */}
-        <div className="px-6 py-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-          <div>
-            Showing <span className="font-bold text-slate-800">{filtered.length > 0 ? 1 : 0} - {filtered.length}</span> of <span className="font-bold text-slate-800">{filtered.length}</span> users
-          </div>
+        {/* Bottom Pagination Strip */}
+        {total > 0 && (
+          <div className="px-6 py-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+            <div>
+              Showing <span className="font-bold text-slate-800">
+                {total === 0 ? 0 : (page * size) + 1} - {Math.min((page + 1) * size, total)}
+              </span> of <span className="font-bold text-slate-800">{total}</span> users
+            </div>
 
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span>Rows per page:</span>
-              <div className="relative">
-                <select
-                  defaultValue="10"
-                  className="appearance-none bg-white border border-slate-200 rounded-lg px-2.5 py-1 pr-6 font-semibold text-slate-700 focus:outline-none"
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span>Rows per page:</span>
+                <div className="relative">
+                  <select
+                    value={size}
+                    onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                    className="appearance-none bg-white border border-slate-200 rounded-lg px-2.5 py-1 pr-6 font-semibold text-slate-700 focus:outline-none cursor-pointer"
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                  </select>
+                  <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Pagination Buttons */}
+              <div className="flex items-center gap-1.5">
+                <button 
+                  disabled={page === 0 || isLoading}
+                  onClick={() => handlePageChange(page - 1)}
+                  className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed font-medium"
                 >
-                  <option value="10">10</option>
-                  <option value="25">25</option>
-                  <option value="50">50</option>
-                </select>
-                <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Prev</span>
+                </button>
+                
+                {Array.from({ length: pages }, (_, i) => (
+                  <button
+                    key={i}
+                    disabled={isLoading}
+                    onClick={() => handlePageChange(i)}
+                    className={`w-7 h-7 rounded-md font-bold flex items-center justify-center text-xs transition-colors cursor-pointer ${
+                      page === i
+                        ? 'bg-[#0B132B] text-white shadow-2xs'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    {i + 1}
+                  </button>
+                )).slice(Math.max(0, page - 2), Math.min(pages, page + 3))}
+
+                <button 
+                  disabled={page >= pages - 1 || isLoading}
+                  onClick={() => handlePageChange(page + 1)}
+                  className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed font-medium"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
               </div>
             </div>
-
-            {/* Pagination Buttons */}
-            <div className="flex items-center gap-1.5">
-              <button 
-                disabled={currentPage === 1}
-                className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>Prev</span>
-              </button>
-              
-              <button className="w-6 h-6 rounded-md bg-indigo-600 text-white font-bold flex items-center justify-center shadow-2xs">
-                1
-              </button>
-
-              <button 
-                disabled
-                className="flex items-center gap-1 px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition-colors"
-              >
-                <span>Next</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

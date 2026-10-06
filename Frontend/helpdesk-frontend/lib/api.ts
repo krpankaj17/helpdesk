@@ -300,35 +300,7 @@ export const api = {
         cacheKey,
         async () => {
           const data = await request<PaginatedResponse<Ticket>>(`/ticket?${query.toString()}`);
-          let ticketList = data?.content || [];
-
-          // If backend hasn't populated assignedAgentName directly, enrich active assignments
-          const needsEnrichment = ticketList.some(t => !t.assignedAgentName && !t.assignedAgentEmail);
-          if (needsEnrichment && ticketList.length > 0) {
-            try {
-              const enrichPromises = ticketList.map(async (t) => {
-                if (t.assignedAgentName) return t;
-                try {
-                  const assignments = await request<TicketAssignment[]>(`/ticket/${t.ticketPublicId}/assignments`).catch(() => []);
-                  const active = assignments?.find(a => a.isActive);
-                  if (active) {
-                    return {
-                      ...t,
-                      assignedAgentPublicId: active.assignedToPublicId,
-                      assignedAgentName: active.assignedToName,
-                      assignedAgentEmail: active.assignedToEmail,
-                    };
-                  }
-                } catch {
-                  // Ignore individual lookup errors
-                }
-                return t;
-              });
-              ticketList = await Promise.all(enrichPromises);
-            } catch {
-              // If bulk enrichment fails, return base tickets
-            }
-          }
+          const ticketList = data?.content || [];
 
           return {
             content: ticketList,
@@ -361,7 +333,7 @@ export const api = {
     }, options?: CacheOptions | { forceRefresh?: boolean }): Promise<Ticket[]> {
       const pageData = await this.getPaginated({
         ...params,
-        size: params?.size ?? 100,
+        size: params?.size ?? 10,
       }, options);
       return pageData.content;
     },
@@ -595,12 +567,21 @@ export const api = {
   },
 
   users: {
-    async getAll(page = 0, size = 50, options?: CacheOptions | { forceRefresh?: boolean }): Promise<User[]> {
+    async getPaginated(page = 0, size = 10, options?: CacheOptions | { forceRefresh?: boolean }): Promise<PaginatedResponse<User>> {
       return apiCache.fetchWithCache(
-        `users:${page}:${size}`,
+        `users:paginated:${page}:${size}`,
         async () => {
-          const data = await request<{ content: User[] }>(`/users?page=${page}&size=${size}`);
-          return data?.content || [];
+          const data = await request<PaginatedResponse<User>>(`/users?page=${page}&size=${size}`);
+          return {
+            content: data?.content || [],
+            totalElements: data?.totalElements ?? (data?.content?.length || 0),
+            totalPages: data?.totalPages ?? 1,
+            number: data?.number ?? page,
+            size: data?.size ?? size,
+            first: data?.first ?? page === 0,
+            last: data?.last ?? true,
+            empty: (data?.content?.length || 0) === 0,
+          };
         },
         {
           ttl: CACHE_TTL.USERS,
@@ -608,6 +589,11 @@ export const api = {
           ...(typeof options === 'object' ? options : {}),
         }
       );
+    },
+
+    async getAll(page = 0, size = 10, options?: CacheOptions | { forceRefresh?: boolean }): Promise<User[]> {
+      const pageData = await this.getPaginated(page, size, options);
+      return pageData.content;
     },
 
     async getMe(options?: CacheOptions | { forceRefresh?: boolean }): Promise<User> {
